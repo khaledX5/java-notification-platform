@@ -48,6 +48,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spotless.version>3.11.0</spotless.version>
         <palantir-java-format.version>2.103.0</palantir-java-format.version>
+        <!-- Base JVM args for test runs; plugins such as JaCoCo append to it. -->
+        <argLine/>
     </properties>
 
     <build>
@@ -63,10 +65,31 @@
                         <showWarnings>true</showWarnings>
                     </configuration>
                 </plugin>
+                <plugin>
+                    <!-- Load Mockito as a Java agent: attaching it at runtime is deprecated since JDK 21. -->
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+                    </configuration>
+                </plugin>
             </plugins>
         </pluginManagement>
 
         <plugins>
+            <plugin>
+                <!-- Exposes each dependency's jar path as a property, e.g. ${org.mockito:mockito-core:jar}. -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>resolve-dependency-paths</id>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
