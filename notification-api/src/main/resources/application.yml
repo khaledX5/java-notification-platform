@@ -1,6 +1,9 @@
 spring:
   application:
     name: notification-api
+  mongodb:
+    # Matches compose.yaml; override with MONGODB_URI in other environments.
+    uri: ${MONGODB_URI:mongodb://localhost:27017/notifications}
 
 server:
   port: 8080
