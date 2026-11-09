@@ -52,6 +52,28 @@ public final class Notification {
                 now);
     }
 
+    /**
+     * Rebuilds a notification from stored state. Meant for persistence adapters only: it trusts the
+     * given values and applies no lifecycle rules.
+     */
+    public static Notification restore(
+            UUID id,
+            String recipient,
+            Channel channel,
+            String subject,
+            String body,
+            NotificationStatus status,
+            String failureReason,
+            Instant createdAt,
+            Instant updatedAt) {
+        Notification notification = new Notification(
+                Objects.requireNonNull(id, "id must not be null"), recipient, channel, subject, body, createdAt);
+        notification.status = Objects.requireNonNull(status, "status must not be null");
+        notification.failureReason = failureReason;
+        notification.updatedAt = updatedAt;
+        return notification;
+    }
+
     public void markQueued(Instant now) {
         transitionTo(NotificationStatus.QUEUED, now);
     }
