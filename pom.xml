@@ -40,6 +40,7 @@
 
     <modules>
         <module>notification-api</module>
+        <module>delivery-worker</module>
     </modules>
 
     <properties>
