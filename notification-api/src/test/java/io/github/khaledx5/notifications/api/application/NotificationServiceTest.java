@@ -14,7 +14,9 @@ import io.github.khaledx5.notifications.api.domain.TemplateRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -26,16 +28,40 @@ class NotificationServiceTest {
 
     private final InMemoryNotificationRepository repository = new InMemoryNotificationRepository();
     private final Map<String, Template> storedTemplates = new HashMap<>();
-    private final NotificationService service =
-            new NotificationService(repository, new InMemoryTemplateRepository(), Clock.fixed(NOW, ZoneOffset.UTC));
+    private final RecordingEventPublisher events = new RecordingEventPublisher();
+    private final NotificationService service = new NotificationService(
+            repository, new InMemoryTemplateRepository(), events, Clock.fixed(NOW, ZoneOffset.UTC));
 
     @Test
-    void requestedNotificationIsStoredAsPending() {
+    void requestedNotificationIsStoredAsQueuedAndAnnounced() {
         Notification notification =
                 service.request("dina@example.com", Channel.EMAIL, "Order shipped", "Your order is on its way");
 
-        assertThat(notification.status()).isEqualTo(NotificationStatus.PENDING);
+        assertThat(notification.status()).isEqualTo(NotificationStatus.QUEUED);
         assertThat(repository.findById(notification.id())).containsSame(notification);
+        assertThat(events.published).containsExactly(notification);
+    }
+
+    @Test
+    void notificationIsAlreadyStoredAsQueuedWhenItsEventGoesOut() {
+        Notification notification = service.request("+201000000000", Channel.SMS, null, "Code 4821");
+
+        assertThat(events.storedStatusAtPublishTime).containsExactly(NotificationStatus.QUEUED);
+        assertThat(notification.status()).isEqualTo(NotificationStatus.QUEUED);
+    }
+
+    @Test
+    void notificationThatCannotBeAnnouncedIsStoredAsFailed() {
+        events.failWith(new EventPublishingException("broker is down", new IllegalStateException()));
+
+        assertThatThrownBy(() -> service.request("+201000000000", Channel.SMS, null, "Code 4821"))
+                .isInstanceOfSatisfying(NotificationNotQueuedException.class, ex -> {
+                    Notification stored =
+                            repository.findById(ex.notificationId()).orElseThrow();
+                    assertThat(stored.status()).isEqualTo(NotificationStatus.FAILED);
+                    assertThat(stored.failureReason()).contains(NotificationService.NOT_QUEUED_REASON);
+                })
+                .hasCauseInstanceOf(EventPublishingException.class);
     }
 
     @Test
@@ -51,6 +77,7 @@ class NotificationServiceTest {
         assertThatIllegalArgumentException().isThrownBy(() -> service.request(" ", Channel.SMS, null, "Code 4821"));
 
         assertThat(repository.size()).isZero();
+        assertThat(events.published).isEmpty();
     }
 
     @Test
@@ -78,8 +105,9 @@ class NotificationServiceTest {
 
         assertThat(notification.subject()).contains("Order A-1042 shipped");
         assertThat(notification.body()).isEqualTo("Hi Dina");
-        assertThat(notification.status()).isEqualTo(NotificationStatus.PENDING);
+        assertThat(notification.status()).isEqualTo(NotificationStatus.QUEUED);
         assertThat(repository.findById(notification.id())).containsSame(notification);
+        assertThat(events.published).containsExactly(notification);
     }
 
     @Test
@@ -100,6 +128,27 @@ class NotificationServiceTest {
                 .isInstanceOf(MissingTemplateVariableException.class);
 
         assertThat(repository.size()).isZero();
+        assertThat(events.published).isEmpty();
+    }
+
+    private final class RecordingEventPublisher implements NotificationEventPublisher {
+
+        private final List<Notification> published = new ArrayList<>();
+        private final List<NotificationStatus> storedStatusAtPublishTime = new ArrayList<>();
+        private EventPublishingException failure;
+
+        void failWith(EventPublishingException failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        public void publishRequested(Notification notification) {
+            if (failure != null) {
+                throw failure;
+            }
+            repository.findById(notification.id()).map(Notification::status).ifPresent(storedStatusAtPublishTime::add);
+            published.add(notification);
+        }
     }
 
     private final class InMemoryTemplateRepository implements TemplateRepository {
