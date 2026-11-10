@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.khaledx5.notifications.events.DeliveryChannel;
-import io.github.khaledx5.notifications.worker.application.DeliveryException;
 import io.github.khaledx5.notifications.worker.application.OutboundMessage;
+import io.github.khaledx5.notifications.worker.application.UndeliverableException;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -33,7 +33,7 @@ class SimulatedSendersTest {
     @ValueSource(strings = {"01000000000", "+0123456789", "+20 100 000 0000", "dina@example.com", "+12345", ""})
     void smsToAnythingElseIsRejected(String recipient) {
         assertThatThrownBy(() -> sms.send(message(recipient)))
-                .isInstanceOf(DeliveryException.class)
+                .isInstanceOf(UndeliverableException.class)
                 .hasMessageContaining("E.164");
     }
 
@@ -46,7 +46,7 @@ class SimulatedSendersTest {
     @ValueSource(strings = {"", "  ", "two tokens"})
     void pushWithoutAUsableTokenIsRejected(String recipient) {
         assertThatThrownBy(() -> push.send(message(recipient)))
-                .isInstanceOf(DeliveryException.class)
+                .isInstanceOf(UndeliverableException.class)
                 .hasMessageContaining("device token");
     }
 

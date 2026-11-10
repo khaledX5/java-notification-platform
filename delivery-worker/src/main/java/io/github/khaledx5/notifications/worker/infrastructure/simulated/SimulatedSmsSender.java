@@ -2,8 +2,8 @@ package io.github.khaledx5.notifications.worker.infrastructure.simulated;
 
 import io.github.khaledx5.notifications.events.DeliveryChannel;
 import io.github.khaledx5.notifications.worker.application.ChannelSender;
-import io.github.khaledx5.notifications.worker.application.DeliveryException;
 import io.github.khaledx5.notifications.worker.application.OutboundMessage;
+import io.github.khaledx5.notifications.worker.application.UndeliverableException;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +30,7 @@ class SimulatedSmsSender implements ChannelSender {
     @Override
     public void send(OutboundMessage message) {
         if (!E164_NUMBER.matcher(message.recipient()).matches()) {
-            throw new DeliveryException("The recipient is not an E.164 phone number");
+            throw new UndeliverableException("The recipient is not an E.164 phone number");
         }
         // The text and the number stay out of the log: both are personal data.
         log.info(

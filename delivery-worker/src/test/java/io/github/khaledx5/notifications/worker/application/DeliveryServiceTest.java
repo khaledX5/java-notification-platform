@@ -70,14 +70,38 @@ class DeliveryServiceTest {
     }
 
     @Test
-    void failureOfTheSenderIsReportedWithItsReason() {
-        sms.failWith(new DeliveryException("gateway is down"));
+    void notificationThatCanNeverBeDeliveredIsReportedAsFailedWithTheReason() {
+        sms.failWith(new UndeliverableException("The recipient is not an E.164 phone number"));
         NotificationRequested event = requested(DeliveryChannel.SMS, "Code 4821");
 
         service.deliver(event);
 
-        assertThat(statuses.failed).containsExactly(Map.entry(event.notificationId(), "gateway is down"));
+        assertThat(statuses.failed)
+                .containsExactly(Map.entry(event.notificationId(), "The recipient is not an E.164 phone number"));
         assertThat(statuses.delivered).isEmpty();
+    }
+
+    @Test
+    void failureThatMayPassIsPassedOnWithoutAReportSoTheEventIsRetried() {
+        sms.failWith(new DeliveryException("gateway is down"));
+
+        assertThatThrownBy(() -> service.deliver(requested(DeliveryChannel.SMS, "Code 4821")))
+                .isInstanceOf(DeliveryException.class)
+                .hasMessage("gateway is down");
+
+        assertThat(statuses.failed).isEmpty();
+        assertThat(statuses.delivered).isEmpty();
+    }
+
+    @Test
+    void abandonedNotificationIsReportedAsFailed() {
+        NotificationRequested event = requested(DeliveryChannel.EMAIL, "Hello");
+
+        service.abandon(event);
+
+        assertThat(statuses.failed)
+                .containsExactly(Map.entry(event.notificationId(), DeliveryService.ABANDONED_REASON));
+        assertThat(email.sent).isEmpty();
     }
 
     @Test
