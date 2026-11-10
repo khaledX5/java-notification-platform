@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Import;
 
 @DataMongoTest
 @Import({TestcontainersConfiguration.class, MongoTemplateRepository.class})
-class MongoTemplateRepositoryTests {
+class MongoTemplateRepositoryIT {
 
     @Autowired
     private MongoTemplateRepository repository;

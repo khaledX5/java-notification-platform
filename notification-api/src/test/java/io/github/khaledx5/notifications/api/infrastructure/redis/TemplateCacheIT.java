@@ -17,7 +17,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 /** Templates against a real MongoDB and a real Redis: MongoDB is the source of truth, Redis the cache. */
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
-class TemplateCacheTests {
+class TemplateCacheIT {
 
     @Autowired
     private TemplateRepository templates;

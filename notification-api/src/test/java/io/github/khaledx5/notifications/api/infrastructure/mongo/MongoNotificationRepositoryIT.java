@@ -15,7 +15,7 @@ import org.springframework.context.annotation.Import;
 
 @DataMongoTest
 @Import({TestcontainersConfiguration.class, MongoNotificationRepository.class})
-class MongoNotificationRepositoryTests {
+class MongoNotificationRepositoryIT {
 
     private static final Instant CREATED = Instant.parse("2026-01-10T09:00:00Z");
     private static final Instant LATER = CREATED.plusSeconds(5);

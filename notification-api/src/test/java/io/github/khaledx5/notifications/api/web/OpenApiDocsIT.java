@@ -15,7 +15,7 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
-class OpenApiDocsTests {
+class OpenApiDocsIT {
 
     @Autowired
     private MockMvcTester mvc;
