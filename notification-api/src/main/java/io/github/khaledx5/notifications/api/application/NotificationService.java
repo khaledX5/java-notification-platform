@@ -6,7 +6,6 @@ import io.github.khaledx5.notifications.api.domain.NotificationRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -28,8 +27,9 @@ public class NotificationService {
         return notifications.save(notification);
     }
 
-    public Optional<Notification> findById(UUID id) {
-        return notifications.findById(id);
+    /** @throws NotificationNotFoundException if no notification has this id */
+    public Notification getById(UUID id) {
+        return notifications.findById(id).orElseThrow(() -> new NotificationNotFoundException(id));
     }
 
     /** Millisecond precision, so a timestamp reads back from the database exactly as it was written. */

@@ -2,6 +2,7 @@ package io.github.khaledx5.notifications.api.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.khaledx5.notifications.api.domain.Channel;
 import io.github.khaledx5.notifications.api.domain.Notification;
@@ -51,12 +52,16 @@ class NotificationServiceTest {
     void findsAStoredNotificationById() {
         Notification notification = service.request("+201000000000", Channel.SMS, null, "Code 4821");
 
-        assertThat(service.findById(notification.id())).containsSame(notification);
+        assertThat(service.getById(notification.id())).isSameAs(notification);
     }
 
     @Test
-    void unknownIdIsEmpty() {
-        assertThat(service.findById(UUID.randomUUID())).isEmpty();
+    void unknownIdIsReportedAsNotFound() {
+        UUID unknown = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.getById(unknown))
+                .isInstanceOf(NotificationNotFoundException.class)
+                .hasMessageContaining(unknown.toString());
     }
 
     private static final class InMemoryNotificationRepository implements NotificationRepository {
