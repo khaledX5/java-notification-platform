@@ -26,8 +26,10 @@ class NotificationController {
 
     @PostMapping
     ResponseEntity<NotificationResponse> create(@Valid @RequestBody CreateNotificationRequest request) {
-        Notification notification =
-                notifications.request(request.recipient(), request.channel(), request.subject(), request.body());
+        Notification notification = request.usesTemplate()
+                ? notifications.requestFromTemplate(
+                        request.recipient(), request.channel(), request.templateKey(), request.variablesOrEmpty())
+                : notifications.request(request.recipient(), request.channel(), request.subject(), request.body());
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}")
                 .buildAndExpand(notification.id())

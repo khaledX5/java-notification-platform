@@ -7,12 +7,18 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 import io.github.khaledx5.notifications.api.application.NotificationNotFoundException;
 import io.github.khaledx5.notifications.api.application.NotificationService;
+import io.github.khaledx5.notifications.api.application.UnknownTemplateException;
 import io.github.khaledx5.notifications.api.domain.Channel;
+import io.github.khaledx5.notifications.api.domain.MissingTemplateVariableException;
 import io.github.khaledx5.notifications.api.domain.Notification;
 import java.time.Instant;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -203,6 +209,99 @@ class NotificationControllerTests {
                 .hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
         assertThat(result).bodyJson().extractingPath("$.detail").isEqualTo("An unexpected error occurred.");
         assertThat(result).bodyText().doesNotContain("secret");
+    }
+
+    @Test
+    void createsANotificationFromATemplate() {
+        Notification email =
+                Notification.request("dina@example.com", Channel.EMAIL, "Order A-1042 shipped", "Hi Dina", CREATED);
+        given(notifications.requestFromTemplate(
+                        "dina@example.com",
+                        Channel.EMAIL,
+                        "order-shipped",
+                        Map.of("orderId", "A-1042", "name", "Dina")))
+                .willReturn(email);
+
+        MvcTestResult result = post("""
+                {
+                  "recipient": "dina@example.com",
+                  "channel": "EMAIL",
+                  "templateKey": "order-shipped",
+                  "variables": {"orderId": "A-1042", "name": "Dina"}
+                }
+                """);
+
+        assertThat(result).hasStatus(HttpStatus.CREATED);
+        assertThat(result).bodyJson().extractingPath("$.subject").isEqualTo("Order A-1042 shipped");
+        assertThat(result).bodyJson().extractingPath("$.body").isEqualTo("Hi Dina");
+    }
+
+    @Test
+    void templateWithoutVariablesIsRenderedWithAnEmptyMap() {
+        given(notifications.requestFromTemplate("+201000000000", Channel.SMS, "maintenance", Map.of()))
+                .willReturn(pendingSms());
+
+        MvcTestResult result = post("""
+                {"recipient": "+201000000000", "channel": "SMS", "templateKey": "maintenance"}
+                """);
+
+        assertThat(result).hasStatus(HttpStatus.CREATED);
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', textBlock = """
+                    {"recipient": "a@b.co", "channel": "EMAIL", "templateKey": "welcome", "body": "Hi"}        | body      | must not be set together with templateKey
+                    {"recipient": "a@b.co", "channel": "EMAIL", "templateKey": "welcome", "subject": "Hi"}     | subject   | must not be set together with templateKey
+                    {"recipient": "a@b.co", "channel": "EMAIL"}                                                | body      | must not be blank unless templateKey is set
+                    {"recipient": "a@b.co", "channel": "EMAIL", "body": "Hi", "variables": {"name": "Dina"}}   | variables | must not be set without templateKey
+                    {"recipient": "a@b.co", "channel": "EMAIL", "templateKey": "Not A Key"}                    | templateKey | must match "[a-z0-9]+(-[a-z0-9]+)*"
+                    """)
+    void rejectsAnAmbiguousOrMissingContentSource(String json, String field, String message) {
+        MvcTestResult result = post(json);
+
+        assertThat(result).hasStatus(HttpStatus.BAD_REQUEST).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().extractingPath("$.errors[0].field").isEqualTo(field);
+        assertThat(result).bodyJson().extractingPath("$.errors[0].message").isEqualTo(message);
+        verifyNoInteractions(notifications);
+    }
+
+    @Test
+    void unknownTemplateIsAnUnprocessableProblem() {
+        given(notifications.requestFromTemplate(any(), any(), any(), any()))
+                .willThrow(new UnknownTemplateException("no-such-template"));
+
+        MvcTestResult result = post("""
+                {"recipient": "+201000000000", "channel": "SMS", "templateKey": "no-such-template"}
+                """);
+
+        assertThat(result).hasStatus(422).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().isLenientlyEqualTo("""
+                {
+                  "title": "Unknown template",
+                  "status": 422,
+                  "detail": "Template 'no-such-template' does not exist"
+                }
+                """);
+    }
+
+    @Test
+    void missingTemplateVariablesAreListedInAnUnprocessableProblem() {
+        given(notifications.requestFromTemplate(any(), any(), any(), any()))
+                .willThrow(new MissingTemplateVariableException(
+                        "order-shipped", new LinkedHashSet<>(List.of("orderId", "name"))));
+
+        MvcTestResult result = post("""
+                {"recipient": "dina@example.com", "channel": "EMAIL", "templateKey": "order-shipped"}
+                """);
+
+        assertThat(result).hasStatus(422).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().isLenientlyEqualTo("""
+                {
+                  "title": "Missing template variables",
+                  "status": 422,
+                  "missingVariables": ["orderId", "name"]
+                }
+                """);
     }
 
     private MvcTestResult post(String json) {

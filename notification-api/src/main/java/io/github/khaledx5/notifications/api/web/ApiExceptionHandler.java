@@ -2,6 +2,8 @@ package io.github.khaledx5.notifications.api.web;
 
 import io.github.khaledx5.notifications.api.application.NotificationNotFoundException;
 import io.github.khaledx5.notifications.api.application.TemplateNotFoundException;
+import io.github.khaledx5.notifications.api.application.UnknownTemplateException;
+import io.github.khaledx5.notifications.api.domain.MissingTemplateVariableException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -34,6 +36,11 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
     static final String ERRORS_PROPERTY = "errors";
+    static final String MISSING_VARIABLES_PROPERTY = "missingVariables";
+
+    /** The request is well-formed, but refers to something that makes it impossible to carry out. */
+    private static final HttpStatusCode UNPROCESSABLE = HttpStatusCode.valueOf(422);
+
     static final String INVALID_REQUEST_DETAIL = "Invalid request content.";
 
     @ExceptionHandler(NotificationNotFoundException.class)
@@ -47,6 +54,21 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     ProblemDetail handleNotFound(TemplateNotFoundException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
         problem.setTitle("Template not found");
+        return problem;
+    }
+
+    @ExceptionHandler(UnknownTemplateException.class)
+    ProblemDetail handleUnknownTemplate(UnknownTemplateException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(UNPROCESSABLE, ex.getMessage());
+        problem.setTitle("Unknown template");
+        return problem;
+    }
+
+    @ExceptionHandler(MissingTemplateVariableException.class)
+    ProblemDetail handleMissingVariables(MissingTemplateVariableException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(UNPROCESSABLE, ex.getMessage());
+        problem.setTitle("Missing template variables");
+        problem.setProperty(MISSING_VARIABLES_PROPERTY, ex.missingVariables());
         return problem;
     }
 
