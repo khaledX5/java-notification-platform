@@ -19,8 +19,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * The HTTP API end to end: controllers, validation, problem details, the service, MongoDB and the
- * Redis template cache, with nothing mocked.
+ * The HTTP API end to end: controllers, validation, problem details, the service, MongoDB, the
+ * Redis template cache and the Kafka producer, with nothing mocked.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -61,7 +61,7 @@ class NotificationApiFlowIT {
 
         assertThat(fetched).hasStatusOk();
         assertThat(fetched).bodyJson().isStrictlyEqualTo(acceptedJson);
-        assertThat(fetched).bodyJson().extractingPath("$.status").isEqualTo("PENDING");
+        assertThat(fetched).bodyJson().extractingPath("$.status").isEqualTo("QUEUED");
     }
 
     @Test
@@ -78,7 +78,7 @@ class NotificationApiFlowIT {
         assertThat(stored).isNotNull();
         assertThat(stored.getString("recipient")).isEqualTo("+201000000000");
         assertThat(stored.getString("channel")).isEqualTo("SMS");
-        assertThat(stored.getString("status")).isEqualTo("PENDING");
+        assertThat(stored.getString("status")).isEqualTo("QUEUED");
         assertThat(stored.containsKey("subject")).isFalse();
     }
 

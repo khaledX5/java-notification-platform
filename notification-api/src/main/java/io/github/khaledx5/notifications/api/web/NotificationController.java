@@ -35,8 +35,8 @@ class NotificationController {
     @Operation(
             summary = "Request a notification",
             description = "Send the content inline (body, optional subject) or name a stored template "
-                    + "(templateKey, variables). The notification is accepted as PENDING and delivered "
-                    + "asynchronously.")
+                    + "(templateKey, variables). The notification is accepted as QUEUED and delivered "
+                    + "asynchronously; read it back to follow its status.")
     @ApiResponse(responseCode = "201", description = "Accepted; the Location header points to the notification")
     @ApiResponse(
             responseCode = "400",
@@ -48,6 +48,13 @@ class NotificationController {
     @ApiResponse(
             responseCode = "422",
             description = "The template does not exist, or a template variable is missing",
+            content =
+                    @Content(
+                            mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(
+            responseCode = "503",
+            description = "The notification could not be queued for delivery; it is stored as FAILED",
             content =
                     @Content(
                             mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,

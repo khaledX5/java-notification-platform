@@ -8,8 +8,28 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+      # Wait for every in-sync replica, and let the broker drop duplicates caused by client retries.
+      acks: all
+      properties:
+        enable.idempotence: true
+        # Consumers know the event type from the topic, not from a Java class name in a header.
+        spring.json.add.type.headers: false
+        # Fail a send quickly when the broker is unreachable instead of blocking the HTTP request.
+        max.block.ms: 5000
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
 
 notifications:
+  events:
+    # How long a request waits for the broker to confirm its event.
+    send-timeout: 5s
+    topic-partitions: 3
+    topic-replicas: 1
   templates:
     # How long a template is served from Redis before it is read from MongoDB again.
     cache-ttl: 10m
