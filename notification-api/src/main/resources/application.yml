@@ -4,6 +4,15 @@ spring:
   mongodb:
     # Matches compose.yaml; override with MONGODB_URI in other environments.
     uri: ${MONGODB_URI:mongodb://localhost:27017/notifications}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+notifications:
+  templates:
+    # How long a template is served from Redis before it is read from MongoDB again.
+    cache-ttl: 10m
 
 server:
   port: 8080
