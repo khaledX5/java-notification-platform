@@ -8,8 +8,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
-/** Starts the whole worker without a broker: the Kafka listeners stay stopped. */
-@SpringBootTest(properties = "spring.kafka.listener.auto-startup=false")
+/** Starts the whole worker without a broker: the Kafka listeners and the topic setup stay off. */
+@SpringBootTest(properties = {"spring.kafka.listener.auto-startup=false", "spring.kafka.admin.auto-create=false"})
 @AutoConfigureMockMvc
 class DeliveryWorkerApplicationTests {
 
