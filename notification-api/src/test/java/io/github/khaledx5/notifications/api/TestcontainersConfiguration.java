@@ -1,8 +1,11 @@
 package io.github.khaledx5.notifications.api;
 
+import io.github.khaledx5.notifications.events.Topics;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
+import org.springframework.kafka.config.TopicBuilder;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.mongodb.MongoDBContainer;
@@ -30,5 +33,14 @@ public class TestcontainersConfiguration {
     @ServiceConnection
     KafkaContainer kafkaContainer() {
         return new KafkaContainer(DockerImageName.parse("apache/kafka:4.3.2"));
+    }
+
+    /** In production the delivery worker declares this topic; here the test stands in for it. */
+    @Bean
+    NewTopic notificationsStatusTopic() {
+        return TopicBuilder.name(Topics.NOTIFICATIONS_STATUS)
+                .partitions(1)
+                .replicas(1)
+                .build();
     }
 }

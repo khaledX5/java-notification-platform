@@ -23,6 +23,18 @@ spring:
         max.block.ms: 5000
         delivery.timeout.ms: 10000
         request.timeout.ms: 5000
+    consumer:
+      group-id: notification-api
+      # A new consumer group starts from the oldest event, so no delivery result is skipped.
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # A record that cannot be read is handed to the error handler instead of blocking the partition.
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+        # The event type comes from this setting, never from a class name sent by the producer.
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: io.github.khaledx5.notifications.events.DeliveryStatusChanged
 
 notifications:
   events:
