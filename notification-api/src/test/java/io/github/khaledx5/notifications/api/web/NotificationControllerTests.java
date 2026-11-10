@@ -5,11 +5,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import io.github.khaledx5.notifications.api.application.NotificationNotFoundException;
 import io.github.khaledx5.notifications.api.application.NotificationService;
 import io.github.khaledx5.notifications.api.domain.Channel;
 import io.github.khaledx5.notifications.api.domain.Notification;
 import java.time.Instant;
-import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -117,7 +117,7 @@ class NotificationControllerTests {
         Notification sms = pendingSms();
         sms.markQueued(CREATED.plusSeconds(1));
         sms.markFailed("provider rejected the number", CREATED.plusSeconds(2));
-        given(notifications.findById(sms.id())).willReturn(Optional.of(sms));
+        given(notifications.getById(sms.id())).willReturn(sms);
 
         MvcTestResult result =
                 mvc.get().uri("/api/v1/notifications/{id}", sms.id()).exchange();
@@ -135,18 +135,74 @@ class NotificationControllerTests {
     }
 
     @Test
-    void unknownNotificationIsNotFound() {
-        given(notifications.findById(any())).willReturn(Optional.empty());
+    void unknownNotificationIsANotFoundProblem() {
+        UUID unknown = UUID.randomUUID();
+        given(notifications.getById(unknown)).willThrow(new NotificationNotFoundException(unknown));
 
-        assertThat(mvc.get().uri("/api/v1/notifications/{id}", UUID.randomUUID()))
-                .hasStatus(HttpStatus.NOT_FOUND);
+        MvcTestResult result =
+                mvc.get().uri("/api/v1/notifications/{id}", unknown).exchange();
+
+        assertThat(result).hasStatus(HttpStatus.NOT_FOUND).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().isLenientlyEqualTo("""
+                        {
+                          "title": "Notification not found",
+                          "status": 404,
+                          "detail": "No notification with id %s",
+                          "instance": "/api/v1/notifications/%s"
+                        }
+                        """.formatted(unknown, unknown));
     }
 
     @Test
-    void malformedIdIsABadRequest() {
-        assertThat(mvc.get().uri("/api/v1/notifications/not-a-uuid")).hasStatus(HttpStatus.BAD_REQUEST);
+    void malformedIdIsABadRequestProblem() {
+        MvcTestResult result = mvc.get().uri("/api/v1/notifications/not-a-uuid").exchange();
 
+        assertThat(result).hasStatus(HttpStatus.BAD_REQUEST).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().extractingPath("$.status").isEqualTo(400);
         verifyNoInteractions(notifications);
+    }
+
+    @Test
+    void validationProblemListsEveryRejectedField() {
+        MvcTestResult result = post("""
+                {"recipient": "", "body": "Code 4821"}
+                """);
+
+        assertThat(result).hasStatus(HttpStatus.BAD_REQUEST).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().isLenientlyEqualTo("""
+                        {
+                          "title": "Bad Request",
+                          "status": 400,
+                          "detail": "Invalid request content.",
+                          "instance": "/api/v1/notifications",
+                          "errors": [
+                            {"field": "channel", "message": "must not be null"},
+                            {"field": "recipient", "message": "must not be blank"}
+                          ]
+                        }
+                        """);
+    }
+
+    @Test
+    void unreadableJsonIsABadRequestProblem() {
+        MvcTestResult result = post("{\"recipient\": ");
+
+        assertThat(result).hasStatus(HttpStatus.BAD_REQUEST).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().doesNotHavePath("$.errors");
+    }
+
+    @Test
+    void unexpectedFailureIsAnInternalErrorProblemWithoutDetails() {
+        given(notifications.getById(any())).willThrow(new IllegalStateException("mongo password=secret"));
+
+        MvcTestResult result =
+                mvc.get().uri("/api/v1/notifications/{id}", UUID.randomUUID()).exchange();
+
+        assertThat(result)
+                .hasStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+                .hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().extractingPath("$.detail").isEqualTo("An unexpected error occurred.");
+        assertThat(result).bodyText().doesNotContain("secret");
     }
 
     private MvcTestResult post(String json) {
