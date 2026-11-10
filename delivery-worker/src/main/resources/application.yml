@@ -15,12 +15,29 @@ spring:
         # The event type comes from this setting, never from a class name sent by the producer.
         spring.json.use.type.headers: false
         spring.json.value.default.type: io.github.khaledx5.notifications.events.NotificationRequested
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+      # Wait for every in-sync replica, and let the broker drop duplicates caused by client retries.
+      acks: all
+      properties:
+        enable.idempotence: true
+        spring.json.add.type.headers: false
+        # Fail a send quickly when the broker is unreachable; the request event is then read again.
+        max.block.ms: 5000
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
   mail:
     # Matches Mailpit in compose.yaml; point these at a real SMTP server in other environments.
     host: ${SMTP_HOST:localhost}
     port: ${SMTP_PORT:1025}
 
 notifications:
+  events:
+    # How long the worker waits for the broker to confirm a status event.
+    send-timeout: 5s
+    topic-partitions: 3
+    topic-replicas: 1
   delivery:
     email:
       from: ${EMAIL_FROM:no-reply@notifications.local}

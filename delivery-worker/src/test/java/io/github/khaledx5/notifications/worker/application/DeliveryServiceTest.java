@@ -9,6 +9,7 @@ import io.github.khaledx5.notifications.events.NotificationRequested;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -21,7 +22,8 @@ class DeliveryServiceTest {
     private final RecordingSender email = new RecordingSender(DeliveryChannel.EMAIL);
     private final RecordingSender sms = new RecordingSender(DeliveryChannel.SMS);
     private final RecordingSender push = new RecordingSender(DeliveryChannel.PUSH);
-    private final DeliveryService service = new DeliveryService(List.of(email, sms, push));
+    private final RecordingStatusPublisher statuses = new RecordingStatusPublisher();
+    private final DeliveryService service = new DeliveryService(List.of(email, sms, push), statuses);
 
     @ParameterizedTest
     @EnumSource(DeliveryChannel.class)
@@ -58,31 +60,78 @@ class DeliveryServiceTest {
     }
 
     @Test
-    void failureOfTheSenderIsPassedOn() {
-        sms.failWith(new DeliveryException("gateway is down"));
+    void deliveredNotificationIsReportedAsDelivered() {
+        NotificationRequested event = requested(DeliveryChannel.PUSH, "You have a new message");
 
-        assertThatThrownBy(() -> service.deliver(requested(DeliveryChannel.SMS, "Code 4821")))
-                .isInstanceOf(DeliveryException.class)
-                .hasMessage("gateway is down");
+        service.deliver(event);
+
+        assertThat(statuses.delivered).containsExactly(event.notificationId());
+        assertThat(statuses.failed).isEmpty();
+    }
+
+    @Test
+    void failureOfTheSenderIsReportedWithItsReason() {
+        sms.failWith(new DeliveryException("gateway is down"));
+        NotificationRequested event = requested(DeliveryChannel.SMS, "Code 4821");
+
+        service.deliver(event);
+
+        assertThat(statuses.failed).containsExactly(Map.entry(event.notificationId(), "gateway is down"));
+        assertThat(statuses.delivered).isEmpty();
+    }
+
+    @Test
+    void resultThatCannotBeReportedIsPassedOnSoTheEventIsProcessedAgain() {
+        statuses.failWith(new StatusPublishingException("broker is down", new IllegalStateException()));
+
+        assertThatThrownBy(() -> service.deliver(requested(DeliveryChannel.EMAIL, "Hello")))
+                .isInstanceOf(StatusPublishingException.class);
     }
 
     @Test
     void channelWithoutASenderStopsTheWorkerAtStartup() {
         assertThatIllegalStateException()
-                .isThrownBy(() -> new DeliveryService(List.of(email, sms)))
+                .isThrownBy(() -> new DeliveryService(List.of(email, sms), statuses))
                 .withMessageContaining("PUSH");
     }
 
     @Test
     void twoSendersForOneChannelStopTheWorkerAtStartup() {
         assertThatIllegalStateException()
-                .isThrownBy(
-                        () -> new DeliveryService(List.of(email, sms, push, new RecordingSender(DeliveryChannel.SMS))))
+                .isThrownBy(() -> new DeliveryService(
+                        List.of(email, sms, push, new RecordingSender(DeliveryChannel.SMS)), statuses))
                 .withMessageContaining("SMS");
     }
 
     private static NotificationRequested requested(DeliveryChannel channel, String body) {
         return new NotificationRequested(UUID.randomUUID(), UUID.randomUUID(), "recipient-1", channel, null, body, NOW);
+    }
+
+    private static final class RecordingStatusPublisher implements DeliveryStatusPublisher {
+
+        private final List<UUID> delivered = new ArrayList<>();
+        private final List<Map.Entry<UUID, String>> failed = new ArrayList<>();
+        private StatusPublishingException failure;
+
+        void failWith(StatusPublishingException failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        public void delivered(UUID notificationId) {
+            if (failure != null) {
+                throw failure;
+            }
+            delivered.add(notificationId);
+        }
+
+        @Override
+        public void failed(UUID notificationId, String reason) {
+            if (failure != null) {
+                throw failure;
+            }
+            failed.add(Map.entry(notificationId, reason));
+        }
     }
 
     private static final class RecordingSender implements ChannelSender {
