@@ -48,6 +48,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spotless.version>3.11.0</spotless.version>
         <palantir-java-format.version>2.103.0</palantir-java-format.version>
+        <springdoc.version>3.2.0</springdoc.version>
         <!-- Base JVM args for test runs; plugins such as JaCoCo append to it. -->
         <argLine/>
     </properties>
