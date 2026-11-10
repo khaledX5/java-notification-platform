@@ -39,6 +39,13 @@ notifications:
     topic-partitions: 3
     topic-replicas: 1
   delivery:
+    retry:
+      # Total tries per notification, the first one included. After the last one it is reported as failed.
+      attempts: 4
+      # Wait before the first retry; each further retry waits `multiplier` times longer, up to `max-delay`.
+      delay: 2s
+      multiplier: 3
+      max-delay: 1m
     email:
       from: ${EMAIL_FROM:no-reply@notifications.local}
 

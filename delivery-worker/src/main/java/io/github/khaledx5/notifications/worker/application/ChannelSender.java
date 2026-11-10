@@ -14,7 +14,9 @@ public interface ChannelSender {
     /**
      * Hands the message to the channel's provider.
      *
-     * @throws DeliveryException if the provider did not accept the message
+     * @throws UndeliverableException if the message can never be delivered, for example because the
+     *     recipient is not valid for this channel
+     * @throws DeliveryException if the provider did not accept the message this time
      */
     void send(OutboundMessage message);
 }

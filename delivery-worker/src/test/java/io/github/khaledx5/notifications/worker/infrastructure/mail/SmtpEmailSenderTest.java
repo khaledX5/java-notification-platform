@@ -10,9 +10,11 @@ import static org.mockito.Mockito.verify;
 import io.github.khaledx5.notifications.events.DeliveryChannel;
 import io.github.khaledx5.notifications.worker.application.DeliveryException;
 import io.github.khaledx5.notifications.worker.application.OutboundMessage;
+import io.github.khaledx5.notifications.worker.application.UndeliverableException;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.mail.MailParseException;
 import org.springframework.mail.MailSendException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -47,12 +49,22 @@ class SmtpEmailSenderTest {
     }
 
     @Test
-    void smtpFailureIsReportedAsADeliveryFailure() {
+    void malformedAddressCanNeverBeDelivered() {
+        willThrow(new MailParseException("Illegal address")).given(mail).send(any(SimpleMailMessage.class));
+
+        assertThatThrownBy(() -> sender.send(new OutboundMessage(UUID.randomUUID(), "not an address", "Hi", "Hello")))
+                .isInstanceOf(UndeliverableException.class)
+                .hasMessageContaining("not a valid email address");
+    }
+
+    @Test
+    void smtpFailureIsReportedAsADeliveryFailureWorthRetrying() {
         MailSendException smtpDown = new MailSendException("connection refused");
         willThrow(smtpDown).given(mail).send(any(SimpleMailMessage.class));
 
         assertThatThrownBy(() -> sender.send(new OutboundMessage(UUID.randomUUID(), "dina@example.com", "Hi", "Hello")))
                 .isInstanceOf(DeliveryException.class)
+                .isNotInstanceOf(UndeliverableException.class)
                 .hasCause(smtpDown);
     }
 
