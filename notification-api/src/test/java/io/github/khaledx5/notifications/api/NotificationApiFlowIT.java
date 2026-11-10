@@ -25,7 +25,7 @@ import tools.jackson.databind.json.JsonMapper;
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
-class NotificationApiFlowTests {
+class NotificationApiFlowIT {
 
     private static final String NOTIFICATIONS = "/api/v1/notifications";
     private static final String TEMPLATES = "/api/v1/templates/{key}";

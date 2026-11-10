@@ -12,7 +12,7 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester;
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
-class NotificationApiApplicationTests {
+class NotificationApiApplicationIT {
 
     @Autowired
     private MockMvcTester mvc;

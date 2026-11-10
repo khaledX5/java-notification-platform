@@ -74,6 +74,13 @@
                         <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
                     </configuration>
                 </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <configuration>
+                        <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+                    </configuration>
+                </plugin>
             </plugins>
         </pluginManagement>
 
@@ -90,6 +97,12 @@
                         </goals>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <!-- Runs *IT classes (they need Docker) after the unit tests. The integration-test and
+                     verify executions are inherited from spring-boot-starter-parent. -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
