@@ -26,7 +26,9 @@ class DeliveryServiceTest {
     private final RecordingSender push = new RecordingSender(DeliveryChannel.PUSH);
     private final RecordingStatusPublisher statuses = new RecordingStatusPublisher();
     private final InMemoryProcessedEvents processedEvents = new InMemoryProcessedEvents();
-    private final DeliveryService service = new DeliveryService(List.of(email, sms, push), statuses, processedEvents);
+    private final SwitchableRateLimiter rateLimiter = new SwitchableRateLimiter();
+    private final DeliveryService service =
+            new DeliveryService(List.of(email, sms, push), statuses, processedEvents, rateLimiter);
 
     @ParameterizedTest
     @EnumSource(DeliveryChannel.class)
@@ -209,9 +211,68 @@ class DeliveryServiceTest {
     }
 
     @Test
+    void recipientOverTheRateLimitGetsNothingAndTheEventIsLeftForARetry() {
+        rateLimiter.exhausted = true;
+        NotificationRequested event = requested(DeliveryChannel.SMS, "Code 4821");
+
+        assertThatThrownBy(() -> service.deliver(event))
+                .isInstanceOf(RateLimitedException.class)
+                .isInstanceOf(DeliveryException.class)
+                .hasMessageContaining("SMS");
+
+        assertThat(sms.sent).isEmpty();
+        assertThat(statuses.delivered).isEmpty();
+        assertThat(statuses.failed).isEmpty();
+    }
+
+    @Test
+    void rateLimitedEventIsDeliveredOnceTheLimitAllowsItAgain() {
+        rateLimiter.exhausted = true;
+        NotificationRequested event = requested(DeliveryChannel.SMS, "Code 4821");
+        assertThatThrownBy(() -> service.deliver(event)).isInstanceOf(RateLimitedException.class);
+        rateLimiter.exhausted = false;
+
+        service.deliver(event);
+
+        assertThat(sms.sent).hasSize(1);
+        assertThat(statuses.delivered).containsExactly(event.notificationId());
+    }
+
+    @Test
+    void rateLimitIsCheckedForTheRecipientAndChannelOfTheEvent() {
+        NotificationRequested event = new NotificationRequested(
+                UUID.randomUUID(), UUID.randomUUID(), "dina@example.com", DeliveryChannel.EMAIL, null, "Hello", NOW);
+
+        service.deliver(event);
+
+        assertThat(rateLimiter.asked).containsExactly(Map.entry(DeliveryChannel.EMAIL, "dina@example.com"));
+    }
+
+    @Test
+    void repeatingTheReportOfAHandledEventDoesNotCountAgainstTheRateLimit() {
+        NotificationRequested event = requested(DeliveryChannel.EMAIL, "Hello");
+        service.deliver(event);
+        rateLimiter.exhausted = true;
+
+        service.deliver(event);
+
+        assertThat(rateLimiter.asked).hasSize(1);
+        assertThat(statuses.delivered).containsExactly(event.notificationId(), event.notificationId());
+    }
+
+    @Test
+    void abandoningAnEventDoesNotAskTheRateLimiter() {
+        rateLimiter.exhausted = true;
+
+        service.abandon(requested(DeliveryChannel.EMAIL, "Hello"));
+
+        assertThat(rateLimiter.asked).isEmpty();
+    }
+
+    @Test
     void channelWithoutASenderStopsTheWorkerAtStartup() {
         assertThatIllegalStateException()
-                .isThrownBy(() -> new DeliveryService(List.of(email, sms), statuses, processedEvents))
+                .isThrownBy(() -> new DeliveryService(List.of(email, sms), statuses, processedEvents, rateLimiter))
                 .withMessageContaining("PUSH");
     }
 
@@ -219,12 +280,27 @@ class DeliveryServiceTest {
     void twoSendersForOneChannelStopTheWorkerAtStartup() {
         assertThatIllegalStateException()
                 .isThrownBy(() -> new DeliveryService(
-                        List.of(email, sms, push, new RecordingSender(DeliveryChannel.SMS)), statuses, processedEvents))
+                        List.of(email, sms, push, new RecordingSender(DeliveryChannel.SMS)),
+                        statuses,
+                        processedEvents,
+                        rateLimiter))
                 .withMessageContaining("SMS");
     }
 
     private static NotificationRequested requested(DeliveryChannel channel, String body) {
         return new NotificationRequested(UUID.randomUUID(), UUID.randomUUID(), "recipient-1", channel, null, body, NOW);
+    }
+
+    private static final class SwitchableRateLimiter implements DeliveryRateLimiter {
+
+        private final List<Map.Entry<DeliveryChannel, String>> asked = new ArrayList<>();
+        private boolean exhausted;
+
+        @Override
+        public boolean tryAcquire(DeliveryChannel channel, String recipient) {
+            asked.add(Map.entry(channel, recipient));
+            return !exhausted;
+        }
     }
 
     private static final class InMemoryProcessedEvents implements ProcessedEvents {

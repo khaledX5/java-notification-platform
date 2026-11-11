@@ -30,16 +30,21 @@ public class DeliveryService {
     private final Map<DeliveryChannel, ChannelSender> senders;
     private final DeliveryStatusPublisher statuses;
     private final ProcessedEvents processedEvents;
+    private final DeliveryRateLimiter rateLimiter;
 
     /**
      * @throws IllegalStateException if a channel has no sender or more than one, so a wiring mistake
      *     stops the worker at startup instead of losing notifications later
      */
     public DeliveryService(
-            List<ChannelSender> senders, DeliveryStatusPublisher statuses, ProcessedEvents processedEvents) {
+            List<ChannelSender> senders,
+            DeliveryStatusPublisher statuses,
+            ProcessedEvents processedEvents,
+            DeliveryRateLimiter rateLimiter) {
         this.senders = byChannel(senders);
         this.statuses = statuses;
         this.processedEvents = processedEvents;
+        this.rateLimiter = rateLimiter;
     }
 
     /**
@@ -47,6 +52,11 @@ public class DeliveryService {
      * is reported as failed right away, with the reason the sender gave. An event that was already
      * handled is not sent again; only its report is repeated.
      *
+     * <p>The rate limit is checked after the duplicate check: repeating a report sends nothing, so it
+     * must neither be held back nor count against the recipient.
+     *
+     * @throws RateLimitedException if the recipient already got as many messages as the limit allows
+     *     right now; nothing was sent
      * @throws DeliveryException if the delivery failed in a way that may pass; the caller is expected
      *     to try again later, and to call {@link #abandon} when it stops trying
      * @throws StatusPublishingException if the result could not be reported; the event must then be
@@ -61,6 +71,13 @@ public class DeliveryService {
                     event.notificationId());
             report(event, earlier.get());
             return;
+        }
+        if (!rateLimiter.tryAcquire(event.channel(), event.recipient())) {
+            log.info(
+                    "Postponing notification {}: its recipient is over the rate limit for {}",
+                    event.notificationId(),
+                    event.channel());
+            throw new RateLimitedException(event.channel());
         }
         DeliveryResult result = send(event);
         processedEvents.remember(event.eventId(), result);
