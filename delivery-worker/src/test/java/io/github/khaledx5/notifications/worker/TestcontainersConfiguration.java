@@ -18,11 +18,18 @@ public class TestcontainersConfiguration {
 
     public static final int MAILPIT_SMTP_PORT = 1025;
     public static final int MAILPIT_HTTP_PORT = 8025;
+    private static final int REDIS_PORT = 6379;
 
     @Bean
     @ServiceConnection
     KafkaContainer kafkaContainer() {
         return new KafkaContainer(DockerImageName.parse("apache/kafka:4.3.2"));
+    }
+
+    @Bean
+    @ServiceConnection(name = "redis")
+    GenericContainer<?> redisContainer() {
+        return new GenericContainer<>(DockerImageName.parse("redis:8.8-alpine")).withExposedPorts(REDIS_PORT);
     }
 
     /** Fake SMTP server that keeps every email and lists them over HTTP. */

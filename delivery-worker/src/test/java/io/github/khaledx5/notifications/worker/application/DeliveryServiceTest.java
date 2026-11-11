@@ -8,8 +8,10 @@ import io.github.khaledx5.notifications.events.DeliveryChannel;
 import io.github.khaledx5.notifications.events.NotificationRequested;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -23,7 +25,8 @@ class DeliveryServiceTest {
     private final RecordingSender sms = new RecordingSender(DeliveryChannel.SMS);
     private final RecordingSender push = new RecordingSender(DeliveryChannel.PUSH);
     private final RecordingStatusPublisher statuses = new RecordingStatusPublisher();
-    private final DeliveryService service = new DeliveryService(List.of(email, sms, push), statuses);
+    private final InMemoryProcessedEvents processedEvents = new InMemoryProcessedEvents();
+    private final DeliveryService service = new DeliveryService(List.of(email, sms, push), statuses, processedEvents);
 
     @ParameterizedTest
     @EnumSource(DeliveryChannel.class)
@@ -113,9 +116,102 @@ class DeliveryServiceTest {
     }
 
     @Test
+    void eventThatArrivesAgainIsNotSentTwiceButItsReportIsRepeated() {
+        NotificationRequested event = requested(DeliveryChannel.EMAIL, "Hello");
+
+        service.deliver(event);
+        service.deliver(event);
+
+        assertThat(email.sent).hasSize(1);
+        assertThat(statuses.delivered).containsExactly(event.notificationId(), event.notificationId());
+    }
+
+    @Test
+    void failedResultIsRepeatedTooWhenTheEventArrivesAgain() {
+        sms.failWith(new UndeliverableException("The recipient is not an E.164 phone number"));
+        NotificationRequested event = requested(DeliveryChannel.SMS, "Code 4821");
+        service.deliver(event);
+        sms.failWith(null);
+
+        service.deliver(event);
+
+        assertThat(sms.sent).isEmpty();
+        assertThat(statuses.delivered).isEmpty();
+        assertThat(statuses.failed)
+                .hasSize(2)
+                .containsOnly(Map.entry(event.notificationId(), "The recipient is not an E.164 phone number"));
+    }
+
+    @Test
+    void eventWhoseReportWasLostIsReportedOnTheRetryWithoutBeingSentAgain() {
+        NotificationRequested event = requested(DeliveryChannel.EMAIL, "Hello");
+        statuses.failWith(new StatusPublishingException("broker is down", new IllegalStateException()));
+        assertThatThrownBy(() -> service.deliver(event)).isInstanceOf(StatusPublishingException.class);
+        statuses.failWith(null);
+
+        service.deliver(event);
+
+        assertThat(email.sent).hasSize(1);
+        assertThat(statuses.delivered).containsExactly(event.notificationId());
+    }
+
+    @Test
+    void failureThatMayPassIsNotRememberedSoTheRetryIsSent() {
+        NotificationRequested event = requested(DeliveryChannel.PUSH, "You have a new message");
+        push.failWith(new DeliveryException("The push provider is down"));
+        assertThatThrownBy(() -> service.deliver(event)).isInstanceOf(DeliveryException.class);
+        push.failWith(null);
+
+        service.deliver(event);
+
+        assertThat(push.sent).hasSize(1);
+        assertThat(statuses.delivered).containsExactly(event.notificationId());
+    }
+
+    @Test
+    void twoEventsForTheSameNotificationAreBothDelivered() {
+        UUID notificationId = UUID.randomUUID();
+        NotificationRequested first = new NotificationRequested(
+                UUID.randomUUID(), notificationId, "device-1", DeliveryChannel.PUSH, null, "Hello", NOW);
+        NotificationRequested second = new NotificationRequested(
+                UUID.randomUUID(), notificationId, "device-1", DeliveryChannel.PUSH, null, "Hello", NOW);
+
+        service.deliver(first);
+        service.deliver(second);
+
+        assertThat(push.sent).hasSize(2);
+    }
+
+    @Test
+    void abandonedEventStaysFailedIfItArrivesAgain() {
+        NotificationRequested event = requested(DeliveryChannel.EMAIL, "Hello");
+        service.abandon(event);
+
+        service.deliver(event);
+
+        assertThat(email.sent).isEmpty();
+        assertThat(statuses.failed)
+                .hasSize(2)
+                .containsOnly(Map.entry(event.notificationId(), DeliveryService.ABANDONED_REASON));
+    }
+
+    @Test
+    void eventThatWasDeliveredButCouldNotBeReportedIsNotAbandonedAsFailed() {
+        NotificationRequested event = requested(DeliveryChannel.EMAIL, "Hello");
+        statuses.failWith(new StatusPublishingException("broker is down", new IllegalStateException()));
+        assertThatThrownBy(() -> service.deliver(event)).isInstanceOf(StatusPublishingException.class);
+        statuses.failWith(null);
+
+        service.abandon(event);
+
+        assertThat(statuses.delivered).containsExactly(event.notificationId());
+        assertThat(statuses.failed).isEmpty();
+    }
+
+    @Test
     void channelWithoutASenderStopsTheWorkerAtStartup() {
         assertThatIllegalStateException()
-                .isThrownBy(() -> new DeliveryService(List.of(email, sms), statuses))
+                .isThrownBy(() -> new DeliveryService(List.of(email, sms), statuses, processedEvents))
                 .withMessageContaining("PUSH");
     }
 
@@ -123,12 +219,27 @@ class DeliveryServiceTest {
     void twoSendersForOneChannelStopTheWorkerAtStartup() {
         assertThatIllegalStateException()
                 .isThrownBy(() -> new DeliveryService(
-                        List.of(email, sms, push, new RecordingSender(DeliveryChannel.SMS)), statuses))
+                        List.of(email, sms, push, new RecordingSender(DeliveryChannel.SMS)), statuses, processedEvents))
                 .withMessageContaining("SMS");
     }
 
     private static NotificationRequested requested(DeliveryChannel channel, String body) {
         return new NotificationRequested(UUID.randomUUID(), UUID.randomUUID(), "recipient-1", channel, null, body, NOW);
+    }
+
+    private static final class InMemoryProcessedEvents implements ProcessedEvents {
+
+        private final Map<UUID, DeliveryResult> results = new HashMap<>();
+
+        @Override
+        public Optional<DeliveryResult> resultOf(UUID eventId) {
+            return Optional.ofNullable(results.get(eventId));
+        }
+
+        @Override
+        public void remember(UUID eventId, DeliveryResult result) {
+            results.put(eventId, result);
+        }
     }
 
     private static final class RecordingStatusPublisher implements DeliveryStatusPublisher {
