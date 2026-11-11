@@ -27,6 +27,13 @@ spring:
         max.block.ms: 5000
         delivery.timeout.ms: 10000
         request.timeout.ms: 5000
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # A Redis outage fails a command within seconds instead of holding up the partition for a minute.
+      timeout: 2s
+      connect-timeout: 2s
   mail:
     # Matches Mailpit in compose.yaml; point these at a real SMTP server in other environments.
     host: ${SMTP_HOST:localhost}
@@ -46,6 +53,9 @@ notifications:
       delay: 2s
       multiplier: 3
       max-delay: 1m
+    deduplication:
+      # How long the result of an event is remembered, so the same event arriving again is not sent twice.
+      ttl: 24h
     email:
       from: ${EMAIL_FROM:no-reply@notifications.local}
 
@@ -56,6 +66,9 @@ management:
   health:
     mail:
       # An SMTP outage must not take the worker out of rotation: it keeps consuming the other channels.
+      enabled: false
+    redis:
+      # The worker keeps delivering without Redis, so a Redis outage must not report it as down either.
       enabled: false
   endpoints:
     web:
