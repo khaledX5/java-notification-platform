@@ -17,10 +17,11 @@ public class TestcontainersConfiguration {
 
     private static final int REDIS_PORT = 6379;
 
+    /** A single-node replica set, like the MongoDB in compose.yaml: transactions do not work without one. */
     @Bean
     @ServiceConnection
     MongoDBContainer mongoDbContainer() {
-        return new MongoDBContainer(DockerImageName.parse("mongo:9.0"));
+        return new MongoDBContainer(DockerImageName.parse("mongo:9.0")).withReplicaSet();
     }
 
     @Bean

@@ -5,6 +5,9 @@ spring:
     # Matches compose.yaml; override with MONGODB_URI in other environments.
     uri: ${MONGODB_URI:mongodb://localhost:27017/notifications}
   data:
+    mongodb:
+      # Creates the indexes declared on the document classes (the outbox) at startup.
+      auto-index-creation: true
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
@@ -22,7 +25,7 @@ spring:
         enable.idempotence: true
         # Consumers know the event type from the topic, not from a Java class name in a header.
         spring.json.add.type.headers: false
-        # Fail a send quickly when the broker is unreachable instead of blocking the HTTP request.
+        # Fail a send quickly when the broker is unreachable; the outbox relay tries again later.
         max.block.ms: 5000
         delivery.timeout.ms: 10000
         request.timeout.ms: 5000
@@ -41,10 +44,18 @@ spring:
 
 notifications:
   events:
-    # How long a request waits for the broker to confirm its event.
+    # How long the outbox relay waits for the broker to confirm an event.
     send-timeout: 5s
     topic-partitions: 3
     topic-replicas: 1
+  outbox:
+    # Pause between two runs of the relay that publishes waiting events to Kafka.
+    poll-interval: 500ms
+    # Most events published in one run.
+    batch-size: 100
+    # How long a relay keeps an event to itself while publishing it; also the wait before a failed
+    # publish is tried again. Has to be longer than the slowest publish.
+    claim-duration: 30s
   idempotency:
     # How long a repeated request with the same Idempotency-Key gets the first notification back.
     ttl: 24h

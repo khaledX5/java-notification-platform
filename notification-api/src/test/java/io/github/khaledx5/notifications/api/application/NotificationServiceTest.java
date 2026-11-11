@@ -12,6 +12,7 @@ import io.github.khaledx5.notifications.api.domain.NotificationStatus;
 import io.github.khaledx5.notifications.api.domain.Template;
 import io.github.khaledx5.notifications.api.domain.TemplateRepository;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -28,40 +29,51 @@ class NotificationServiceTest {
 
     private final InMemoryNotificationRepository repository = new InMemoryNotificationRepository();
     private final Map<String, Template> storedTemplates = new HashMap<>();
-    private final RecordingEventPublisher events = new RecordingEventPublisher();
+    private final RecordingOutbox outbox = new RecordingOutbox();
     private final NotificationService service = new NotificationService(
-            repository, new InMemoryTemplateRepository(), events, Clock.fixed(NOW, ZoneOffset.UTC));
+            repository, new InMemoryTemplateRepository(), outbox, Clock.fixed(NOW, ZoneOffset.UTC));
 
     @Test
-    void requestedNotificationIsStoredAsQueuedAndAnnounced() {
+    void requestedNotificationIsStoredAsQueuedWithItsEventInTheOutbox() {
         Notification notification =
                 service.request("dina@example.com", Channel.EMAIL, "Order shipped", "Your order is on its way");
 
         assertThat(notification.status()).isEqualTo(NotificationStatus.QUEUED);
         assertThat(repository.findById(notification.id())).containsSame(notification);
-        assertThat(events.published).containsExactly(notification);
+        assertThat(outbox.added).singleElement().satisfies(event -> {
+            assertThat(event.id()).isNotNull();
+            assertThat(event.notificationId()).isEqualTo(notification.id());
+            assertThat(event.recipient()).isEqualTo("dina@example.com");
+            assertThat(event.channel()).isEqualTo(Channel.EMAIL);
+            assertThat(event.subject()).isEqualTo("Order shipped");
+            assertThat(event.body()).isEqualTo("Your order is on its way");
+            assertThat(event.occurredAt()).isEqualTo(notification.updatedAt());
+        });
     }
 
     @Test
-    void notificationIsAlreadyStoredAsQueuedWhenItsEventGoesOut() {
-        Notification notification = service.request("+201000000000", Channel.SMS, null, "Code 4821");
+    void notificationIsAlreadyStoredAsQueuedWhenItsEventIsAdded() {
+        service.request("+201000000000", Channel.SMS, null, "Code 4821");
 
-        assertThat(events.storedStatusAtPublishTime).containsExactly(NotificationStatus.QUEUED);
-        assertThat(notification.status()).isEqualTo(NotificationStatus.QUEUED);
+        assertThat(outbox.storedStatusWhenAdded).containsExactly(NotificationStatus.QUEUED);
     }
 
     @Test
-    void notificationThatCannotBeAnnouncedIsStoredAsFailed() {
-        events.failWith(new EventPublishingException("broker is down", new IllegalStateException()));
+    void eventOfANotificationWithoutSubjectHasNone() {
+        service.request("+201000000000", Channel.SMS, " ", "Code 4821");
 
-        assertThatThrownBy(() -> service.request("+201000000000", Channel.SMS, null, "Code 4821"))
-                .isInstanceOfSatisfying(NotificationNotQueuedException.class, ex -> {
-                    Notification stored =
-                            repository.findById(ex.notificationId()).orElseThrow();
-                    assertThat(stored.status()).isEqualTo(NotificationStatus.FAILED);
-                    assertThat(stored.failureReason()).contains(NotificationService.NOT_QUEUED_REASON);
-                })
-                .hasCauseInstanceOf(EventPublishingException.class);
+        assertThat(outbox.added)
+                .singleElement()
+                .satisfies(event -> assertThat(event.subject()).isNull());
+    }
+
+    @Test
+    void everyNotificationGetsItsOwnEvent() {
+        service.request("+201000000000", Channel.SMS, null, "Code 4821");
+        service.request("+201000000000", Channel.SMS, null, "Code 4821");
+
+        assertThat(outbox.added).extracting(OutboxEvent::id).doesNotHaveDuplicates();
+        assertThat(outbox.added).extracting(OutboxEvent::notificationId).doesNotHaveDuplicates();
     }
 
     @Test
@@ -77,7 +89,7 @@ class NotificationServiceTest {
         assertThatIllegalArgumentException().isThrownBy(() -> service.request(" ", Channel.SMS, null, "Code 4821"));
 
         assertThat(repository.size()).isZero();
-        assertThat(events.published).isEmpty();
+        assertThat(outbox.added).isEmpty();
     }
 
     @Test
@@ -107,7 +119,11 @@ class NotificationServiceTest {
         assertThat(notification.body()).isEqualTo("Hi Dina");
         assertThat(notification.status()).isEqualTo(NotificationStatus.QUEUED);
         assertThat(repository.findById(notification.id())).containsSame(notification);
-        assertThat(events.published).containsExactly(notification);
+        assertThat(outbox.added).singleElement().satisfies(event -> {
+            assertThat(event.notificationId()).isEqualTo(notification.id());
+            assertThat(event.subject()).isEqualTo("Order A-1042 shipped");
+            assertThat(event.body()).isEqualTo("Hi Dina");
+        });
     }
 
     @Test
@@ -118,6 +134,7 @@ class NotificationServiceTest {
                 .hasMessageContaining("no-such-template");
 
         assertThat(repository.size()).isZero();
+        assertThat(outbox.added).isEmpty();
     }
 
     @Test
@@ -128,26 +145,32 @@ class NotificationServiceTest {
                 .isInstanceOf(MissingTemplateVariableException.class);
 
         assertThat(repository.size()).isZero();
-        assertThat(events.published).isEmpty();
+        assertThat(outbox.added).isEmpty();
     }
 
-    private final class RecordingEventPublisher implements NotificationEventPublisher {
+    /** The service only ever adds to the outbox; taking events out of it is the job of the relay. */
+    private final class RecordingOutbox implements Outbox {
 
-        private final List<Notification> published = new ArrayList<>();
-        private final List<NotificationStatus> storedStatusAtPublishTime = new ArrayList<>();
-        private EventPublishingException failure;
+        private final List<OutboxEvent> added = new ArrayList<>();
+        private final List<NotificationStatus> storedStatusWhenAdded = new ArrayList<>();
 
-        void failWith(EventPublishingException failure) {
-            this.failure = failure;
+        @Override
+        public void add(OutboxEvent event) {
+            repository
+                    .findById(event.notificationId())
+                    .map(Notification::status)
+                    .ifPresent(storedStatusWhenAdded::add);
+            added.add(event);
         }
 
         @Override
-        public void publishRequested(Notification notification) {
-            if (failure != null) {
-                throw failure;
-            }
-            repository.findById(notification.id()).map(Notification::status).ifPresent(storedStatusAtPublishTime::add);
-            published.add(notification);
+        public Optional<OutboxEvent> claimNext(Instant now, Duration claimDuration) {
+            throw new UnsupportedOperationException("the service does not publish events");
+        }
+
+        @Override
+        public void markPublished(UUID eventId, Instant now) {
+            throw new UnsupportedOperationException("the service does not publish events");
         }
     }
 

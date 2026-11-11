@@ -76,8 +76,7 @@ class NotificationController {
                             schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(
             responseCode = "503",
-            description = "The notification could not be queued for delivery and is stored as FAILED, or the "
-                    + "Idempotency-Key could not be checked and nothing was stored",
+            description = "The Idempotency-Key could not be checked; nothing was stored",
             content =
                     @Content(
                             mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,

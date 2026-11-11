@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 /**
  * Settings for the events this service publishes.
  *
- * @param sendTimeout how long a request waits for the broker to confirm an event
+ * @param sendTimeout how long the outbox relay waits for the broker to confirm an event
  * @param topicPartitions partitions of the topics this service declares
  * @param topicReplicas replicas of the topics this service declares; one is enough for a single
  *     local broker
