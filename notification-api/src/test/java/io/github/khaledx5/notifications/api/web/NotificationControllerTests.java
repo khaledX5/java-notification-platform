@@ -2,12 +2,20 @@ package io.github.khaledx5.notifications.api.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import io.github.khaledx5.notifications.api.application.IdempotencyKeyReusedException;
+import io.github.khaledx5.notifications.api.application.IdempotencyUnavailableException;
+import io.github.khaledx5.notifications.api.application.IdempotentRequests;
 import io.github.khaledx5.notifications.api.application.NotificationNotFoundException;
 import io.github.khaledx5.notifications.api.application.NotificationNotQueuedException;
 import io.github.khaledx5.notifications.api.application.NotificationService;
+import io.github.khaledx5.notifications.api.application.RequestInProgressException;
 import io.github.khaledx5.notifications.api.application.UnknownTemplateException;
 import io.github.khaledx5.notifications.api.domain.Channel;
 import io.github.khaledx5.notifications.api.domain.MissingTemplateVariableException;
@@ -17,10 +25,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.HttpStatus;
@@ -33,12 +43,19 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
 class NotificationControllerTests {
 
     private static final Instant CREATED = Instant.parse("2026-01-10T09:00:00.123Z");
+    private static final String KEY = "order-1042-shipped";
+    private static final String SMS_JSON = """
+            {"recipient": "+201000000000", "channel": "SMS", "body": "Code 4821"}
+            """;
 
     @Autowired
     private MockMvcTester mvc;
 
     @MockitoBean
     private NotificationService notifications;
+
+    @MockitoBean
+    private IdempotentRequests idempotentRequests;
 
     @Test
     void createsANotificationAndPointsToIt() {
@@ -319,6 +336,146 @@ class NotificationControllerTests {
                   "missingVariables": ["orderId", "name"]
                 }
                 """);
+    }
+
+    @Test
+    void requestWithoutAnIdempotencyKeyIsNotCheckedForRepeats() {
+        given(notifications.request("+201000000000", Channel.SMS, null, "Code 4821"))
+                .willReturn(pendingSms());
+
+        MvcTestResult result = post(SMS_JSON);
+
+        assertThat(result).hasStatus(HttpStatus.CREATED).doesNotContainHeader("Idempotency-Replayed");
+        verifyNoInteractions(idempotentRequests);
+    }
+
+    @Test
+    void requestWithANewIdempotencyKeyIsRunUnderThatKey() {
+        Notification sms = pendingSms();
+        given(notifications.request("+201000000000", Channel.SMS, null, "Code 4821"))
+                .willReturn(sms);
+        given(idempotentRequests.execute(eq(KEY), anyString(), any())).willAnswer(invocation -> {
+            Supplier<Notification> request = invocation.getArgument(2);
+            return new IdempotentRequests.Result(request.get(), false);
+        });
+
+        MvcTestResult result = post(SMS_JSON, KEY);
+
+        assertThat(result)
+                .hasStatus(HttpStatus.CREATED)
+                .hasHeader("Location", "http://localhost/api/v1/notifications/" + sms.id())
+                .doesNotContainHeader("Idempotency-Replayed");
+        assertThat(result).bodyJson().extractingPath("$.id").isEqualTo(sms.id().toString());
+    }
+
+    @Test
+    void repeatedRequestReturnsTheFirstNotificationMarkedAsReplayed() {
+        Notification first = pendingSms();
+        given(idempotentRequests.execute(eq(KEY), anyString(), any()))
+                .willReturn(new IdempotentRequests.Result(first, true));
+
+        MvcTestResult result = post(SMS_JSON, KEY);
+
+        assertThat(result)
+                .hasStatus(HttpStatus.CREATED)
+                .hasHeader("Location", "http://localhost/api/v1/notifications/" + first.id())
+                .hasHeader("Idempotency-Replayed", "true");
+        assertThat(result)
+                .bodyJson()
+                .extractingPath("$.id")
+                .isEqualTo(first.id().toString());
+        verifyNoInteractions(notifications);
+    }
+
+    @Test
+    void sameContentIsCheckedWithTheSameFingerprintWhateverTheFieldOrder() {
+        given(idempotentRequests.execute(eq(KEY), anyString(), any()))
+                .willReturn(new IdempotentRequests.Result(pendingSms(), true));
+
+        post(SMS_JSON, KEY);
+        post("""
+                {"body": "Code 4821", "channel": "SMS", "recipient": "+201000000000"}
+                """, KEY);
+
+        ArgumentCaptor<String> fingerprints = ArgumentCaptor.forClass(String.class);
+        then(idempotentRequests).should(times(2)).execute(eq(KEY), fingerprints.capture(), any());
+        assertThat(fingerprints.getAllValues().get(0))
+                .isEqualTo(fingerprints.getAllValues().get(1));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "order 1042"})
+    void rejectsAnIdempotencyKeyThatIsEmptyOrHasSpaces(String key) {
+        MvcTestResult result = post(SMS_JSON, key);
+
+        assertThat(result).hasStatus(HttpStatus.BAD_REQUEST).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().extractingPath("$.errors[0].field").isEqualTo("Idempotency-Key");
+        assertThat(result)
+                .bodyJson()
+                .extractingPath("$.errors[0].message")
+                .isEqualTo("must be 1 to 255 visible ASCII characters");
+        verifyNoInteractions(idempotentRequests, notifications);
+    }
+
+    @Test
+    void rejectsAnIdempotencyKeyThatIsTooLong() {
+        MvcTestResult result = post(SMS_JSON, "k".repeat(256));
+
+        assertThat(result).hasStatus(HttpStatus.BAD_REQUEST);
+        verifyNoInteractions(idempotentRequests, notifications);
+    }
+
+    @Test
+    void keyUsedWithADifferentBodyIsAnUnprocessableProblem() {
+        given(idempotentRequests.execute(any(), any(), any())).willThrow(new IdempotencyKeyReusedException());
+
+        MvcTestResult result = post(SMS_JSON, KEY);
+
+        assertThat(result).hasStatus(422).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().extractingPath("$.title").isEqualTo("Idempotency key reused");
+    }
+
+    @Test
+    void repeatOfARequestThatIsStillRunningIsAConflictProblem() {
+        given(idempotentRequests.execute(any(), any(), any())).willThrow(new RequestInProgressException());
+
+        MvcTestResult result = post(SMS_JSON, KEY);
+
+        assertThat(result).hasStatus(HttpStatus.CONFLICT).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().extractingPath("$.title").isEqualTo("Request in progress");
+    }
+
+    @Test
+    void keyThatCannotBeCheckedIsAServiceUnavailableProblemWithoutDetails() {
+        given(idempotentRequests.execute(any(), any(), any()))
+                .willThrow(new IdempotencyUnavailableException(
+                        "Could not reserve an idempotency key", new IllegalStateException("redis=cache-1:6379")));
+
+        MvcTestResult result = post(SMS_JSON, KEY);
+
+        assertThat(result).hasStatus(HttpStatus.SERVICE_UNAVAILABLE).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().extractingPath("$.title").isEqualTo("Idempotency check unavailable");
+        assertThat(result).bodyText().doesNotContain("cache-1");
+    }
+
+    @Test
+    void bodyIsStillValidatedWhenAnIdempotencyKeyIsSent() {
+        MvcTestResult result = post("""
+                {"recipient": "", "channel": "SMS", "body": "Code 4821"}
+                """, KEY);
+
+        assertThat(result).hasStatus(HttpStatus.BAD_REQUEST);
+        assertThat(result).bodyJson().extractingPath("$.errors[0].field").isEqualTo("recipient");
+        verifyNoInteractions(idempotentRequests);
+    }
+
+    private MvcTestResult post(String json, String idempotencyKey) {
+        return mvc.post()
+                .uri("/api/v1/notifications")
+                .header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json)
+                .exchange();
     }
 
     private MvcTestResult post(String json) {

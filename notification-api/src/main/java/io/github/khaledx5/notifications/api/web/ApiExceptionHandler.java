@@ -1,7 +1,10 @@
 package io.github.khaledx5.notifications.api.web;
 
+import io.github.khaledx5.notifications.api.application.IdempotencyKeyReusedException;
+import io.github.khaledx5.notifications.api.application.IdempotencyUnavailableException;
 import io.github.khaledx5.notifications.api.application.NotificationNotFoundException;
 import io.github.khaledx5.notifications.api.application.NotificationNotQueuedException;
+import io.github.khaledx5.notifications.api.application.RequestInProgressException;
 import io.github.khaledx5.notifications.api.application.TemplateNotFoundException;
 import io.github.khaledx5.notifications.api.application.UnknownTemplateException;
 import io.github.khaledx5.notifications.api.domain.MissingTemplateVariableException;
@@ -19,6 +22,7 @@ import org.springframework.validation.method.ParameterErrors;
 import org.springframework.validation.method.ParameterValidationResult;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
@@ -85,6 +89,33 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(IdempotencyKeyReusedException.class)
+    ProblemDetail handleKeyReused(IdempotencyKeyReusedException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                UNPROCESSABLE, "This Idempotency-Key was already used with a different request body.");
+        problem.setTitle("Idempotency key reused");
+        return problem;
+    }
+
+    @ExceptionHandler(RequestInProgressException.class)
+    ProblemDetail handleInProgress(RequestInProgressException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT,
+                "The first request with this Idempotency-Key is still being processed. Try again shortly.");
+        problem.setTitle("Request in progress");
+        return problem;
+    }
+
+    /** The key could not be checked, so the request was not run; repeating it later is safe. */
+    @ExceptionHandler(IdempotencyUnavailableException.class)
+    ProblemDetail handleIdempotencyUnavailable(IdempotencyUnavailableException ex) {
+        log.error("An idempotency key could not be checked", ex);
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, "The Idempotency-Key could not be checked. Try again later.");
+        problem.setTitle("Idempotency check unavailable");
+        return problem;
+    }
+
     @ExceptionHandler(Exception.class)
     ProblemDetail handleUnexpected(Exception ex) {
         log.error("Unhandled exception while processing a request", ex);
@@ -115,12 +146,21 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                         .forEach(error ->
                                 violations.add(new FieldViolation(error.getField(), error.getDefaultMessage())));
             } else {
-                String parameter = result.getMethodParameter().getParameterName();
+                String parameter = nameOf(result);
                 result.getResolvableErrors()
                         .forEach(error -> violations.add(new FieldViolation(parameter, error.getDefaultMessage())));
             }
         }
         return validationProblem(ex, ex.getBody(), violations, headers, status, request);
+    }
+
+    /** A header is reported under the name the client sent it with, not the Java parameter name. */
+    private static String nameOf(ParameterValidationResult result) {
+        RequestHeader header = result.getMethodParameter().getParameterAnnotation(RequestHeader.class);
+        if (header != null && !header.name().isEmpty()) {
+            return header.name();
+        }
+        return result.getMethodParameter().getParameterName();
     }
 
     private ResponseEntity<Object> validationProblem(
