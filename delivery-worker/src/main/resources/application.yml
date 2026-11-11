@@ -56,6 +56,12 @@ notifications:
     deduplication:
       # How long the result of an event is remembered, so the same event arriving again is not sent twice.
       ttl: 24h
+    rate-limit:
+      # Most notifications one recipient gets at once on one channel. One over the limit is retried
+      # like a failed delivery, so it normally arrives a little later.
+      capacity: 10
+      # Time to earn one of them back: 6s allows 10 per minute once the burst is used up.
+      refill-interval: 6s
     email:
       from: ${EMAIL_FROM:no-reply@notifications.local}
 
