@@ -3,7 +3,6 @@ package io.github.khaledx5.notifications.api.web;
 import io.github.khaledx5.notifications.api.application.IdempotencyKeyReusedException;
 import io.github.khaledx5.notifications.api.application.IdempotencyUnavailableException;
 import io.github.khaledx5.notifications.api.application.NotificationNotFoundException;
-import io.github.khaledx5.notifications.api.application.NotificationNotQueuedException;
 import io.github.khaledx5.notifications.api.application.RequestInProgressException;
 import io.github.khaledx5.notifications.api.application.TemplateNotFoundException;
 import io.github.khaledx5.notifications.api.application.UnknownTemplateException;
@@ -42,7 +41,6 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     static final String ERRORS_PROPERTY = "errors";
     static final String MISSING_VARIABLES_PROPERTY = "missingVariables";
-    static final String NOTIFICATION_ID_PROPERTY = "notificationId";
 
     /** The request is well-formed, but refers to something that makes it impossible to carry out. */
     private static final HttpStatusCode UNPROCESSABLE = HttpStatusCode.valueOf(422);
@@ -75,17 +73,6 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(UNPROCESSABLE, ex.getMessage());
         problem.setTitle("Missing template variables");
         problem.setProperty(MISSING_VARIABLES_PROPERTY, ex.missingVariables());
-        return problem;
-    }
-
-    /** The broker is unreachable; the client may try again later. */
-    @ExceptionHandler(NotificationNotQueuedException.class)
-    ProblemDetail handleNotQueued(NotificationNotQueuedException ex) {
-        log.error("Notification {} could not be queued", ex.notificationId(), ex);
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.SERVICE_UNAVAILABLE, "The notification could not be queued for delivery. Try again later.");
-        problem.setTitle("Notification not queued");
-        problem.setProperty(NOTIFICATION_ID_PROPERTY, ex.notificationId());
         return problem;
     }
 

@@ -13,7 +13,6 @@ import io.github.khaledx5.notifications.api.application.IdempotencyKeyReusedExce
 import io.github.khaledx5.notifications.api.application.IdempotencyUnavailableException;
 import io.github.khaledx5.notifications.api.application.IdempotentRequests;
 import io.github.khaledx5.notifications.api.application.NotificationNotFoundException;
-import io.github.khaledx5.notifications.api.application.NotificationNotQueuedException;
 import io.github.khaledx5.notifications.api.application.NotificationService;
 import io.github.khaledx5.notifications.api.application.RequestInProgressException;
 import io.github.khaledx5.notifications.api.application.UnknownTemplateException;
@@ -227,22 +226,6 @@ class NotificationControllerTests {
                 .hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
         assertThat(result).bodyJson().extractingPath("$.detail").isEqualTo("An unexpected error occurred.");
         assertThat(result).bodyText().doesNotContain("secret");
-    }
-
-    @Test
-    void notificationThatCouldNotBeQueuedIsAServiceUnavailableProblem() {
-        UUID id = UUID.randomUUID();
-        given(notifications.request("+201000000000", Channel.SMS, null, "Code 4821"))
-                .willThrow(new NotificationNotQueuedException(id, new IllegalStateException("broker=kafka-1:9092")));
-
-        MvcTestResult result = post("""
-                {"recipient": "+201000000000", "channel": "SMS", "body": "Code 4821"}
-                """);
-
-        assertThat(result).hasStatus(HttpStatus.SERVICE_UNAVAILABLE).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
-        assertThat(result).bodyJson().extractingPath("$.title").isEqualTo("Notification not queued");
-        assertThat(result).bodyJson().extractingPath("$.notificationId").isEqualTo(id.toString());
-        assertThat(result).bodyText().doesNotContain("kafka-1");
     }
 
     @Test

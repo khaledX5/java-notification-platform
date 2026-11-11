@@ -13,49 +13,42 @@ import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Use cases for accepting notification requests and reading them back. */
 @Service
 public class NotificationService {
 
-    static final String NOT_QUEUED_REASON = "Could not be queued for delivery";
-
     private final NotificationRepository notifications;
     private final TemplateRepository templates;
-    private final NotificationEventPublisher events;
+    private final Outbox outbox;
     private final Clock clock;
 
     public NotificationService(
-            NotificationRepository notifications,
-            TemplateRepository templates,
-            NotificationEventPublisher events,
-            Clock clock) {
+            NotificationRepository notifications, TemplateRepository templates, Outbox outbox, Clock clock) {
         this.notifications = notifications;
         this.templates = templates;
-        this.events = events;
+        this.outbox = outbox;
         this.clock = clock;
     }
 
     /**
      * Accepts a new notification and queues it for delivery.
      *
-     * <p>The notification is stored as queued before its event is published. The worker can report a
-     * result within milliseconds, and that report must find a notification it is allowed to complete.
+     * <p>The notification and the event that announces it are stored in one transaction. The broker
+     * is not involved here: the {@link OutboxRelay} publishes the event afterwards, so a notification
+     * is accepted even while the broker is down, and none is ever stored without its event.
      *
-     * @throws NotificationNotQueuedException if the event could not be published; the notification is
-     *     then stored as failed
+     * <p>The notification is queued from the start. The worker can report a result within
+     * milliseconds of the event going out, and that report must find a notification it is allowed to
+     * complete.
      */
+    @Transactional
     public Notification request(String recipient, Channel channel, String subject, String body) {
         Notification notification = Notification.request(recipient, channel, subject, body, now());
         notification.markQueued(now());
         notifications.save(notification);
-        try {
-            events.publishRequested(notification);
-        } catch (EventPublishingException ex) {
-            notification.markFailed(NOT_QUEUED_REASON, now());
-            notifications.save(notification);
-            throw new NotificationNotQueuedException(notification.id(), ex);
-        }
+        outbox.add(OutboxEvent.requested(notification));
         return notification;
     }
 
@@ -64,8 +57,8 @@ public class NotificationService {
      *
      * @throws UnknownTemplateException if no template has this key
      * @throws MissingTemplateVariableException if a placeholder of the template has no value
-     * @throws NotificationNotQueuedException if the event could not be published
      */
+    @Transactional
     public Notification requestFromTemplate(
             String recipient, Channel channel, String templateKey, Map<String, String> variables) {
         Template template =

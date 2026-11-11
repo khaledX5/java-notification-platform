@@ -12,13 +12,13 @@ import java.util.Set;
  * </pre>
  */
 public enum NotificationStatus {
-    /** Accepted by the API, not yet handed to the broker. */
+    /** Created, not yet queued. A notification leaves this status before it is stored. */
     PENDING,
-    /** Published to the broker, waiting for a delivery result. */
+    /** Stored together with the event that announces it; waiting for a delivery result. */
     QUEUED,
     /** Confirmed as delivered by the worker. Terminal. */
     DELIVERED,
-    /** Could not be queued or delivered. Terminal. */
+    /** Could not be delivered. Terminal. */
     FAILED;
 
     public boolean canTransitionTo(NotificationStatus next) {
