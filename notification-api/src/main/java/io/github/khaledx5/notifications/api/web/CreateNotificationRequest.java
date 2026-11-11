@@ -6,7 +6,10 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Body of {@code POST /api/v1/notifications}.
@@ -38,5 +41,23 @@ record CreateNotificationRequest(
     /** Never null, so callers do not have to care whether the field was sent. */
     Map<String, String> variablesOrEmpty() {
         return variables == null ? Map.of() : variables;
+    }
+
+    /**
+     * Identifies the content of this request for idempotency checks. The order in which the variables
+     * were sent does not matter.
+     */
+    String fingerprint() {
+        List<String> fields = new ArrayList<>();
+        fields.add(recipient);
+        fields.add(channel == null ? null : channel.name());
+        fields.add(subject);
+        fields.add(body);
+        fields.add(templateKey);
+        new TreeMap<>(variablesOrEmpty()).forEach((name, value) -> {
+            fields.add(name);
+            fields.add(value);
+        });
+        return RequestFingerprint.of(fields);
     }
 }

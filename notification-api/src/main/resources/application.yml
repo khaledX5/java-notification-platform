@@ -8,6 +8,9 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # A Redis outage fails a command within seconds instead of holding the request for a minute.
+      timeout: 2s
+      connect-timeout: 2s
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
@@ -42,6 +45,11 @@ notifications:
     send-timeout: 5s
     topic-partitions: 3
     topic-replicas: 1
+  idempotency:
+    # How long a repeated request with the same Idempotency-Key gets the first notification back.
+    ttl: 24h
+    # How long a key stays reserved if its first request never finishes, e.g. the service was stopped.
+    in-progress-ttl: 1m
   templates:
     # How long a template is served from Redis before it is read from MongoDB again.
     cache-ttl: 10m
