@@ -22,6 +22,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -159,6 +160,40 @@ class DeliveryFlowIT {
     }
 
     @Test
+    void eventThatArrivesTwiceSendsOnlyOneEmail() {
+        String recipient = "dina-" + UUID.randomUUID() + "@example.com";
+        NotificationRequested event = requested(DeliveryChannel.EMAIL, recipient, "Order shipped", "On its way");
+        NotificationRequested behind = requested(DeliveryChannel.SMS, "+201000000000", null, "Code 4821");
+
+        publish(event);
+        publish(event);
+        // The topic has one partition here, so this event is handled after both copies above.
+        publish(behind);
+
+        statuses.awaitFor(behind.notificationId());
+        assertThat(statuses.awaitFor(event.notificationId()).outcome()).isEqualTo(DeliveryOutcome.DELIVERED);
+        assertThat(emailsTo(recipient)).hasSize(1);
+    }
+
+    @Test
+    void eventsWithDifferentIdsForTheSameNotificationAreNotMistakenForDuplicates() {
+        String token = "device-" + UUID.randomUUID();
+        UUID notificationId = UUID.randomUUID();
+        NotificationRequested first = new NotificationRequested(
+                UUID.randomUUID(), notificationId, token, DeliveryChannel.PUSH, null, "Hello", Instant.now());
+        NotificationRequested second = new NotificationRequested(
+                UUID.randomUUID(), notificationId, token, DeliveryChannel.PUSH, null, "Hello", Instant.now());
+        NotificationRequested behind = requested(DeliveryChannel.SMS, "+201000000000", null, "Code 4821");
+
+        publish(first);
+        publish(second);
+        publish(behind);
+
+        statuses.awaitFor(behind.notificationId());
+        verify(push, times(2)).send(argThat(sentTo(token)));
+    }
+
+    @Test
     void unreadableRecordDoesNotStopTheWorker() {
         publishRaw("this is not a notification event");
         NotificationRequested next = requested(DeliveryChannel.SMS, "+201000000000", null, "Code 4821");
@@ -185,6 +220,12 @@ class DeliveryFlowIT {
     }
 
     private JsonNode receivedEmailTo(String recipient) {
+        return emailsTo(recipient).stream()
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No email was received for " + recipient));
+    }
+
+    private List<JsonNode> emailsTo(String recipient) {
         URI inbox = URI.create("http://%s:%d/api/v1/messages"
                 .formatted(mailpit.getHost(), mailpit.getMappedPort(TestcontainersConfiguration.MAILPIT_HTTP_PORT)));
         HttpRequest request = HttpRequest.newBuilder(inbox).GET().build();
@@ -195,8 +236,7 @@ class DeliveryFlowIT {
             return StreamSupport.stream(messages.spliterator(), false)
                     .filter(message ->
                             message.get("To").get(0).get("Address").asString().equals(recipient))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("No email was received for " + recipient));
+                    .toList();
         } catch (IOException ex) {
             throw new IllegalStateException(ex);
         } catch (InterruptedException ex) {
