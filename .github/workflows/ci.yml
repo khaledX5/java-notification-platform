@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build:
-    name: Format check, unit and integration tests
+    name: Format check, tests and coverage
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -31,6 +31,33 @@ jobs:
 
       - name: Build and test
         run: ./mvnw --batch-mode --no-transfer-progress verify
+
+      - name: Summarize test coverage
+        run: |
+          {
+            echo "### Test coverage"
+            echo
+            echo "| Module | Lines | Branches |"
+            echo "| --- | --- | --- |"
+            for csv in */target/site/jacoco/jacoco.csv; do
+              awk -F, -v module="${csv%%/*}" '
+                NR > 1 { branchMissed += $6; branchCovered += $7; lineMissed += $8; lineCovered += $9 }
+                END {
+                  lines = lineMissed + lineCovered
+                  branches = branchMissed + branchCovered
+                  printf "| %s | %.1f%% | %.1f%% |\n", module,
+                    (lines ? 100 * lineCovered / lines : 100),
+                    (branches ? 100 * branchCovered / branches : 100)
+                }' "$csv"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-reports
+          path: "*/target/site/jacoco/"
+          retention-days: 14
 
       - name: Upload test reports
         if: failure()
