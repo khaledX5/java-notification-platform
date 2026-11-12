@@ -1,0 +1,12 @@
+# Only what the Maven build needs goes into the build context: everything is left out first,
+# then the build files and the modules are let back in.
+*
+
+!.mvn/
+!mvnw
+!pom.xml
+!notification-events/
+!notification-api/
+!delivery-worker/
+
+**/target/

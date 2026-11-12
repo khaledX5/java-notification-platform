@@ -1,6 +1,13 @@
-# Local infrastructure for development.
-# Start:  docker compose up -d
-# Stop:   docker compose down        (add -v to also delete the data volumes)
+# Local infrastructure for development, and optionally the two services as well.
+#
+# Infrastructure only (run the services from the IDE or with ./mvnw spring-boot:run):
+#   docker compose up -d
+#
+# Everything, with the services built from source into images:
+#   docker compose --profile app up -d --build
+#
+# Stop:
+#   docker compose --profile app down        (add -v to also delete the data volumes)
 
 name: notification-platform
 
@@ -67,6 +74,63 @@ services:
     ports:
       - "1025:1025"
       - "8025:8025"
+
+  notification-api:
+    profiles: ["app"]
+    build:
+      context: .
+      args:
+        MODULE: notification-api
+    image: notification-platform/notification-api
+    ports:
+      - "8080:8080"
+    environment:
+      # The replica set member calls itself localhost:27017, which only works from the host.
+      # directConnection makes the driver use the address it was given instead.
+      MONGODB_URI: mongodb://mongodb:27017/notifications?directConnection=true
+      REDIS_HOST: redis
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  delivery-worker:
+    profiles: ["app"]
+    build:
+      context: .
+      args:
+        MODULE: delivery-worker
+    image: notification-platform/delivery-worker
+    ports:
+      - "8081:8081"
+    environment:
+      REDIS_HOST: redis
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8081/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
 volumes:
   mongodb-data:
