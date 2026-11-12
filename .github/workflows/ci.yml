@@ -68,3 +68,43 @@ jobs:
             **/target/surefire-reports/
             **/target/failsafe-reports/
           retention-days: 7
+
+  full-stack:
+    name: Docker images and full-stack smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build the images and start the platform
+        run: docker compose --profile app up --detach --build --wait --wait-timeout 300
+
+      - name: Send a notification and wait for its delivery
+        run: |
+          location=$(curl --fail --silent --show-error --dump-header - --output /dev/null \
+            --request POST http://localhost:8080/api/v1/notifications \
+            --header 'Content-Type: application/json' \
+            --data '{"recipient": "smoke@example.com", "channel": "EMAIL", "subject": "Smoke test", "body": "The platform is up"}' \
+            | awk 'tolower($1) == "location:" { print $2 }' | tr -d '\r')
+          echo "notification: $location"
+
+          for attempt in $(seq 1 30); do
+            status=$(curl --fail --silent "$location" | jq --raw-output .status)
+            if [ "$status" = "DELIVERED" ]; then break; fi
+            sleep 1
+          done
+          echo "status: $status"
+          test "$status" = "DELIVERED"
+
+          # The email really went through SMTP: the fake server has it.
+          curl --fail --silent http://localhost:8025/api/v1/messages | jq --exit-status '.total == 1'
+
+      - name: Show the logs of the services
+        if: failure()
+        run: docker compose --profile app logs notification-api delivery-worker
+
+      - name: Stop the platform
+        if: always()
+        run: docker compose --profile app down --volumes
