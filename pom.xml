@@ -42,6 +42,7 @@
         <module>notification-events</module>
         <module>notification-api</module>
         <module>delivery-worker</module>
+        <module>end-to-end-tests</module>
     </modules>
 
     <properties>
