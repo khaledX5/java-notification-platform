@@ -51,6 +51,9 @@
         <spotless.version>3.11.0</spotless.version>
         <palantir-java-format.version>2.103.0</palantir-java-format.version>
         <springdoc.version>3.2.0</springdoc.version>
+        <jacoco.version>0.8.16</jacoco.version>
+        <coverage.minimum.lines>0.90</coverage.minimum.lines>
+        <coverage.minimum.branches>0.85</coverage.minimum.branches>
         <!-- Base JVM args for test runs; plugins such as JaCoCo append to it. -->
         <argLine/>
     </properties>
@@ -160,6 +163,65 @@
                         <goals>
                             <goal>check</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <!-- Measures which code the tests run. Unit and integration tests write to the same file,
+                     so the report under target/site/jacoco shows what both cover together. -->
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>coverage-agent-for-unit-tests</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>coverage-agent-for-integration-tests</id>
+                        <goals>
+                            <goal>prepare-agent-integration</goal>
+                        </goals>
+                        <configuration>
+                            <destFile>${project.build.directory}/jacoco.exec</destFile>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>coverage-report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <!-- A floor, not a target: it sits below today's numbers and only stops a change
+                             that leaves a noticeable part of the code untested. -->
+                        <id>coverage-floor</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${coverage.minimum.lines}</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${coverage.minimum.branches}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
