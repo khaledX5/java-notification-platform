@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
  * <p>An event is marked as published only after the broker confirmed it. If the relay stops between
  * the two steps the event is published again later, so events are delivered at least once and carry
  * a stable id for consumers to recognise the repeat.
+ *
+ * <p>Each event is published as a continuation of the trace of the request that caused it.
  */
 @Service
 @EnableConfigurationProperties(OutboxProperties.class)
@@ -22,12 +24,22 @@ public class OutboxRelay {
 
     private final Outbox outbox;
     private final NotificationEventPublisher events;
+    private final TracePropagation tracing;
+    private final NotificationMetrics metrics;
     private final OutboxProperties properties;
     private final Clock clock;
 
-    public OutboxRelay(Outbox outbox, NotificationEventPublisher events, OutboxProperties properties, Clock clock) {
+    public OutboxRelay(
+            Outbox outbox,
+            NotificationEventPublisher events,
+            TracePropagation tracing,
+            NotificationMetrics metrics,
+            OutboxProperties properties,
+            Clock clock) {
         this.outbox = outbox;
         this.events = events;
+        this.tracing = tracing;
+        this.metrics = metrics;
         this.properties = properties;
         this.clock = clock;
     }
@@ -50,8 +62,9 @@ public class OutboxRelay {
             }
             OutboxEvent event = next.get();
             try {
-                events.publishRequested(event);
+                tracing.resume(event.trace(), () -> events.publishRequested(event));
             } catch (EventPublishingException ex) {
+                metrics.eventPublishFailed();
                 log.warn(
                         "Event {} of notification {} could not be published; it stays in the outbox",
                         event.id(),
@@ -60,6 +73,7 @@ public class OutboxRelay {
                 break;
             }
             outbox.markPublished(event.id(), clock.instant());
+            metrics.eventPublished();
             published++;
         }
         return published;

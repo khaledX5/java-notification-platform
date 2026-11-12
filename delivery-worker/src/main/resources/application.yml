@@ -3,6 +3,12 @@ spring:
     name: delivery-worker
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    template:
+      # Every event that is sent carries the trace it belongs to (W3C traceparent header).
+      observation-enabled: true
+    listener:
+      # Every event that is consumed continues the trace it arrived with, retries included.
+      observation-enabled: true
     consumer:
       group-id: delivery-worker
       # A new consumer group starts from the oldest event, so nothing requested before it is skipped.
@@ -79,7 +85,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health, info
+        # Metrics as JSON under /actuator/metrics and in Prometheus format under /actuator/prometheus.
+        include: health, info, metrics, prometheus
   endpoint:
     health:
       probes:

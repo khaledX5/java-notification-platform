@@ -26,8 +26,10 @@ class OutboxRelayTest {
     private final AdjustableClock clock = new AdjustableClock(START);
     private final InMemoryOutbox outbox = new InMemoryOutbox();
     private final RecordingPublisher broker = new RecordingPublisher();
-    private final OutboxRelay relay =
-            new OutboxRelay(outbox, broker, new OutboxProperties(POLL_INTERVAL, BATCH_SIZE, CLAIM_DURATION), clock);
+    private final StubTracePropagation tracing = new StubTracePropagation();
+    private final RecordingMetrics metrics = new RecordingMetrics();
+    private final OutboxRelay relay = new OutboxRelay(
+            outbox, broker, tracing, metrics, new OutboxProperties(POLL_INTERVAL, BATCH_SIZE, CLAIM_DURATION), clock);
 
     @Test
     void emptyOutboxLeavesTheBrokerAlone() {
@@ -121,6 +123,56 @@ class OutboxRelayTest {
         assertThat(broker.published).extracting(OutboxEvent::id).containsExactly(event.id(), event.id());
     }
 
+    @Test
+    void eachEventIsPublishedInTheTraceOfTheRequestThatCausedIt() {
+        Map<String, String> firstTrace =
+                Map.of("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+        Map<String, String> secondTrace =
+                Map.of("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+        outbox.add(requested(START, firstTrace));
+        outbox.add(requested(START.plusMillis(1), secondTrace));
+
+        relay.relayPending();
+
+        assertThat(tracing.resumed).containsExactly(firstTrace, secondTrace);
+    }
+
+    @Test
+    void publishedAndFailedEventsAreCounted() {
+        outbox.addWaiting();
+        outbox.addWaiting();
+        relay.relayPending();
+        outbox.addWaiting();
+        broker.down = true;
+        relay.relayPending();
+
+        assertThat(metrics.eventsPublished).isEqualTo(2);
+        assertThat(metrics.eventPublishFailures).isEqualTo(1);
+    }
+
+    @Test
+    void outboxReportsHowManyEventsAreStillWaiting() {
+        outbox.addWaiting();
+        outbox.addWaiting();
+        outbox.addWaiting();
+
+        relay.relayPending();
+
+        assertThat(outbox.countWaiting()).isEqualTo(1);
+    }
+
+    private static OutboxEvent requested(Instant occurredAt, Map<String, String> trace) {
+        return new OutboxEvent(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "+201000000000",
+                Channel.SMS,
+                null,
+                "Code 4821",
+                occurredAt,
+                trace);
+    }
+
     private static OutboxEvent requested(Instant occurredAt) {
         return new OutboxEvent(
                 UUID.randomUUID(), UUID.randomUUID(), "+201000000000", Channel.SMS, null, "Code 4821", occurredAt);
@@ -180,6 +232,13 @@ class OutboxRelayTest {
                 return;
             }
             publishedAt.put(eventId, now);
+        }
+
+        @Override
+        public long countWaiting() {
+            return events.stream()
+                    .filter(event -> !publishedAt.containsKey(event.id()))
+                    .count();
         }
     }
 

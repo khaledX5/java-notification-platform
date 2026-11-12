@@ -31,4 +31,7 @@ public interface Outbox {
 
     /** Records that the broker confirmed the event, so it is not handed out again. */
     void markPublished(UUID eventId, Instant now);
+
+    /** How many events have not been published yet. A number that keeps growing means the relay is stuck. */
+    long countWaiting();
 }

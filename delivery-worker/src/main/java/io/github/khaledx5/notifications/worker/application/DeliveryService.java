@@ -31,6 +31,7 @@ public class DeliveryService {
     private final DeliveryStatusPublisher statuses;
     private final ProcessedEvents processedEvents;
     private final DeliveryRateLimiter rateLimiter;
+    private final DeliveryMetrics metrics;
 
     /**
      * @throws IllegalStateException if a channel has no sender or more than one, so a wiring mistake
@@ -40,11 +41,13 @@ public class DeliveryService {
             List<ChannelSender> senders,
             DeliveryStatusPublisher statuses,
             ProcessedEvents processedEvents,
-            DeliveryRateLimiter rateLimiter) {
+            DeliveryRateLimiter rateLimiter,
+            DeliveryMetrics metrics) {
         this.senders = byChannel(senders);
         this.statuses = statuses;
         this.processedEvents = processedEvents;
         this.rateLimiter = rateLimiter;
+        this.metrics = metrics;
     }
 
     /**
@@ -69,6 +72,7 @@ public class DeliveryService {
                     "Event {} of notification {} was already handled; repeating its report",
                     event.eventId(),
                     event.notificationId());
+            metrics.record(event.channel(), DeliveryMetrics.Attempt.DUPLICATE);
             report(event, earlier.get());
             return;
         }
@@ -77,6 +81,7 @@ public class DeliveryService {
                     "Postponing notification {}: its recipient is over the rate limit for {}",
                     event.notificationId(),
                     event.channel());
+            metrics.record(event.channel(), DeliveryMetrics.Attempt.RATE_LIMITED);
             throw new RateLimitedException(event.channel());
         }
         DeliveryResult result = send(event);
@@ -98,6 +103,7 @@ public class DeliveryService {
             return;
         }
         log.error("Giving up on notification {} over {}", event.notificationId(), event.channel());
+        metrics.record(event.channel(), DeliveryMetrics.Attempt.ABANDONED);
         DeliveryResult result = DeliveryResult.failed(ABANDONED_REASON);
         processedEvents.remember(event.eventId(), result);
         report(event, result);
@@ -110,9 +116,14 @@ public class DeliveryService {
             senders.get(event.channel()).send(message);
         } catch (UndeliverableException ex) {
             log.warn("Notification {} cannot be delivered over {}", event.notificationId(), event.channel(), ex);
+            metrics.record(event.channel(), DeliveryMetrics.Attempt.UNDELIVERABLE);
             return DeliveryResult.failed(ex.getMessage());
+        } catch (DeliveryException ex) {
+            metrics.record(event.channel(), DeliveryMetrics.Attempt.PROVIDER_FAILURE);
+            throw ex;
         }
         log.info("Delivered notification {} over {}", event.notificationId(), event.channel());
+        metrics.record(event.channel(), DeliveryMetrics.Attempt.DELIVERED);
         return DeliveryResult.delivered();
     }
 

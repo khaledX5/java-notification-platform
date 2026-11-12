@@ -22,13 +22,22 @@ public class NotificationService {
     private final NotificationRepository notifications;
     private final TemplateRepository templates;
     private final Outbox outbox;
+    private final TracePropagation tracing;
+    private final NotificationMetrics metrics;
     private final Clock clock;
 
     public NotificationService(
-            NotificationRepository notifications, TemplateRepository templates, Outbox outbox, Clock clock) {
+            NotificationRepository notifications,
+            TemplateRepository templates,
+            Outbox outbox,
+            TracePropagation tracing,
+            NotificationMetrics metrics,
+            Clock clock) {
         this.notifications = notifications;
         this.templates = templates;
         this.outbox = outbox;
+        this.tracing = tracing;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -42,13 +51,17 @@ public class NotificationService {
      * <p>The notification is queued from the start. The worker can report a result within
      * milliseconds of the event going out, and that report must find a notification it is allowed to
      * complete.
+     *
+     * <p>The trace of the request is stored with the event, so the delivery that follows later shows
+     * up in the same trace.
      */
     @Transactional
     public Notification request(String recipient, Channel channel, String subject, String body) {
         Notification notification = Notification.request(recipient, channel, subject, body, now());
         notification.markQueued(now());
         notifications.save(notification);
-        outbox.add(OutboxEvent.requested(notification));
+        outbox.add(OutboxEvent.requested(notification, tracing.capture()));
+        metrics.accepted(channel);
         return notification;
     }
 

@@ -27,8 +27,9 @@ class DeliveryServiceTest {
     private final RecordingStatusPublisher statuses = new RecordingStatusPublisher();
     private final InMemoryProcessedEvents processedEvents = new InMemoryProcessedEvents();
     private final SwitchableRateLimiter rateLimiter = new SwitchableRateLimiter();
+    private final RecordingMetrics metrics = new RecordingMetrics();
     private final DeliveryService service =
-            new DeliveryService(List.of(email, sms, push), statuses, processedEvents, rateLimiter);
+            new DeliveryService(List.of(email, sms, push), statuses, processedEvents, rateLimiter, metrics);
 
     @ParameterizedTest
     @EnumSource(DeliveryChannel.class)
@@ -270,9 +271,38 @@ class DeliveryServiceTest {
     }
 
     @Test
+    void everyKindOfAttemptIsCountedForItsChannel() {
+        NotificationRequested delivered = requested(DeliveryChannel.EMAIL, "Hello");
+        service.deliver(delivered);
+        service.deliver(delivered);
+
+        sms.failWith(new UndeliverableException("The recipient is not an E.164 phone number"));
+        service.deliver(requested(DeliveryChannel.SMS, "Code 4821"));
+
+        push.failWith(new DeliveryException("The push provider is down"));
+        NotificationRequested failing = requested(DeliveryChannel.PUSH, "You have a new message");
+        assertThatThrownBy(() -> service.deliver(failing)).isInstanceOf(DeliveryException.class);
+        service.abandon(failing);
+
+        rateLimiter.exhausted = true;
+        assertThatThrownBy(() -> service.deliver(requested(DeliveryChannel.EMAIL, "Hello again")))
+                .isInstanceOf(RateLimitedException.class);
+
+        assertThat(metrics.recorded)
+                .containsExactly(
+                        Map.entry(DeliveryChannel.EMAIL, DeliveryMetrics.Attempt.DELIVERED),
+                        Map.entry(DeliveryChannel.EMAIL, DeliveryMetrics.Attempt.DUPLICATE),
+                        Map.entry(DeliveryChannel.SMS, DeliveryMetrics.Attempt.UNDELIVERABLE),
+                        Map.entry(DeliveryChannel.PUSH, DeliveryMetrics.Attempt.PROVIDER_FAILURE),
+                        Map.entry(DeliveryChannel.PUSH, DeliveryMetrics.Attempt.ABANDONED),
+                        Map.entry(DeliveryChannel.EMAIL, DeliveryMetrics.Attempt.RATE_LIMITED));
+    }
+
+    @Test
     void channelWithoutASenderStopsTheWorkerAtStartup() {
         assertThatIllegalStateException()
-                .isThrownBy(() -> new DeliveryService(List.of(email, sms), statuses, processedEvents, rateLimiter))
+                .isThrownBy(
+                        () -> new DeliveryService(List.of(email, sms), statuses, processedEvents, rateLimiter, metrics))
                 .withMessageContaining("PUSH");
     }
 
@@ -283,12 +313,23 @@ class DeliveryServiceTest {
                         List.of(email, sms, push, new RecordingSender(DeliveryChannel.SMS)),
                         statuses,
                         processedEvents,
-                        rateLimiter))
+                        rateLimiter,
+                        metrics))
                 .withMessageContaining("SMS");
     }
 
     private static NotificationRequested requested(DeliveryChannel channel, String body) {
         return new NotificationRequested(UUID.randomUUID(), UUID.randomUUID(), "recipient-1", channel, null, body, NOW);
+    }
+
+    private static final class RecordingMetrics implements DeliveryMetrics {
+
+        private final List<Map.Entry<DeliveryChannel, Attempt>> recorded = new ArrayList<>();
+
+        @Override
+        public void record(DeliveryChannel channel, Attempt attempt) {
+            recorded.add(Map.entry(channel, attempt));
+        }
     }
 
     private static final class SwitchableRateLimiter implements DeliveryRateLimiter {

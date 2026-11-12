@@ -24,10 +24,12 @@ public class DeliveryResultRecorder {
     private static final Logger log = LoggerFactory.getLogger(DeliveryResultRecorder.class);
 
     private final NotificationRepository notifications;
+    private final NotificationMetrics metrics;
     private final Clock clock;
 
-    public DeliveryResultRecorder(NotificationRepository notifications, Clock clock) {
+    public DeliveryResultRecorder(NotificationRepository notifications, NotificationMetrics metrics, Clock clock) {
         this.notifications = notifications;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -55,6 +57,7 @@ public class DeliveryResultRecorder {
         }
         result.accept(notification);
         notifications.save(notification);
+        metrics.completed(notification.status());
     }
 
     /** Millisecond precision, so a timestamp reads back from the database exactly as it was written. */
