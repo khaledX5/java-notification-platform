@@ -24,8 +24,9 @@ class DeliveryResultRecorderTest {
     private static final Instant NOW = Instant.parse("2026-01-10T09:00:05.250999Z");
 
     private final InMemoryNotificationRepository repository = new InMemoryNotificationRepository();
+    private final RecordingMetrics metrics = new RecordingMetrics();
     private final DeliveryResultRecorder recorder =
-            new DeliveryResultRecorder(repository, Clock.fixed(NOW, ZoneOffset.UTC));
+            new DeliveryResultRecorder(repository, metrics, Clock.fixed(NOW, ZoneOffset.UTC));
 
     @Test
     void queuedNotificationBecomesDelivered() {
@@ -38,6 +39,7 @@ class DeliveryResultRecorderTest {
         assertThat(stored.failureReason()).isEmpty();
         assertThat(stored.updatedAt()).isEqualTo(Instant.parse("2026-01-10T09:00:05.250Z"));
         assertThat(repository.saves).isEqualTo(1);
+        assertThat(metrics.completed).containsExactly(NotificationStatus.DELIVERED);
     }
 
     @Test
@@ -49,6 +51,7 @@ class DeliveryResultRecorderTest {
         Notification stored = repository.findById(notification.id()).orElseThrow();
         assertThat(stored.status()).isEqualTo(NotificationStatus.FAILED);
         assertThat(stored.failureReason()).contains("The SMTP server did not accept the email");
+        assertThat(metrics.completed).containsExactly(NotificationStatus.FAILED);
     }
 
     @Test
@@ -59,6 +62,7 @@ class DeliveryResultRecorderTest {
         recorder.delivered(notification.id());
 
         assertThat(repository.saves).isEqualTo(1);
+        assertThat(metrics.completed).hasSize(1);
     }
 
     @Test

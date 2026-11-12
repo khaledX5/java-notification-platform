@@ -24,7 +24,8 @@ class IdempotentRequestsTest {
 
     private final InMemoryIdempotencyStore store = new InMemoryIdempotencyStore();
     private final NotificationService notifications = mock(NotificationService.class);
-    private final IdempotentRequests requests = new IdempotentRequests(store, notifications);
+    private final RecordingMetrics metrics = new RecordingMetrics();
+    private final IdempotentRequests requests = new IdempotentRequests(store, notifications, metrics);
     private final CountingRequest request = new CountingRequest();
 
     @Test
@@ -34,6 +35,7 @@ class IdempotentRequestsTest {
         assertThat(result.replayed()).isFalse();
         assertThat(result.notification()).isSameAs(request.created);
         assertThat(store.held(KEY)).contains(IdempotencyRecord.completed(FINGERPRINT, request.created.id()));
+        assertThat(metrics.replays).isZero();
     }
 
     @Test
@@ -46,6 +48,7 @@ class IdempotentRequestsTest {
         assertThat(repeat.replayed()).isTrue();
         assertThat(repeat.notification()).isSameAs(first);
         assertThat(request.runs).isEqualTo(1);
+        assertThat(metrics.replays).isEqualTo(1);
     }
 
     @Test

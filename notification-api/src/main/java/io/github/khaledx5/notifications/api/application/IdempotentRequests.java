@@ -26,10 +26,12 @@ public class IdempotentRequests {
 
     private final IdempotencyStore store;
     private final NotificationService notifications;
+    private final NotificationMetrics metrics;
 
-    public IdempotentRequests(IdempotencyStore store, NotificationService notifications) {
+    public IdempotentRequests(IdempotencyStore store, NotificationService notifications, NotificationMetrics metrics) {
         this.store = store;
         this.notifications = notifications;
+        this.metrics = metrics;
     }
 
     /**
@@ -44,7 +46,9 @@ public class IdempotentRequests {
     public Result execute(String key, String fingerprint, Supplier<Notification> request) {
         Optional<IdempotencyRecord> earlier = store.reserve(key, fingerprint);
         if (earlier.isPresent()) {
-            return new Result(repeatOf(earlier.get(), fingerprint), true);
+            Notification first = repeatOf(earlier.get(), fingerprint);
+            metrics.replayed();
+            return new Result(first, true);
         }
         Notification notification = runReserved(key, request);
         complete(key, fingerprint, notification);

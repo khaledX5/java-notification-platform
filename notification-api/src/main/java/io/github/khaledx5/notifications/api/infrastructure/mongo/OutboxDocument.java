@@ -3,6 +3,7 @@ package io.github.khaledx5.notifications.api.infrastructure.mongo;
 import io.github.khaledx5.notifications.api.application.OutboxEvent;
 import io.github.khaledx5.notifications.api.domain.Channel;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
@@ -16,6 +17,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
  * oldest first. Published entries are kept for a week for troubleshooting and then removed by the
  * TTL index.
  *
+ * @param trace trace headers of the request that caused the event; absent in entries without a trace
  * @param claimedUntil while this lies in the future a relay is publishing the entry
  * @param attempts how often the entry was handed to a relay; more than one means a publish failed or
  *     a relay stopped half-way
@@ -31,6 +33,7 @@ record OutboxDocument(
         String subject,
         String body,
         Instant occurredAt,
+        Map<String, String> trace,
         Instant claimedUntil,
         int attempts,
 
@@ -54,6 +57,7 @@ record OutboxDocument(
                 event.subject(),
                 event.body(),
                 event.occurredAt(),
+                event.trace().isEmpty() ? null : event.trace(),
                 null,
                 0,
                 null);
@@ -61,6 +65,13 @@ record OutboxDocument(
 
     OutboxEvent toEvent() {
         return new OutboxEvent(
-                UUID.fromString(id), UUID.fromString(notificationId), recipient, channel, subject, body, occurredAt);
+                UUID.fromString(id),
+                UUID.fromString(notificationId),
+                recipient,
+                channel,
+                subject,
+                body,
+                occurredAt,
+                trace);
     }
 }

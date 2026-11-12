@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -151,6 +152,29 @@ class MongoOutboxIT {
         }
 
         assertThat(claimedByAll).hasSize(WAITING_EVENTS).doesNotHaveDuplicates();
+    }
+
+    @Test
+    void traceOfAnEventIsStoredAndHandedOutWithIt() {
+        Map<String, String> trace = Map.of("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+        OutboxEvent traced = new OutboxEvent(
+                UUID.randomUUID(), UUID.randomUUID(), "+201000000000", Channel.SMS, null, "Code 4821", NOW, trace);
+        outbox.add(traced);
+
+        assertThat(outbox.claimNext(NOW, CLAIM))
+                .hasValueSatisfying(claimed -> assertThat(claimed.trace()).isEqualTo(trace));
+    }
+
+    @Test
+    void onlyEventsThatAreNotPublishedYetCountAsWaiting() {
+        OutboxEvent published = occurredAt(NOW);
+        outbox.add(published);
+        outbox.add(occurredAt(NOW.plusSeconds(1)));
+        outbox.add(occurredAt(NOW.plusSeconds(2)));
+        outbox.claimNext(NOW.plusSeconds(5), CLAIM);
+        outbox.markPublished(published.id(), NOW.plusSeconds(6));
+
+        assertThat(outbox.countWaiting()).isEqualTo(2);
     }
 
     @Test

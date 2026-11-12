@@ -30,8 +30,10 @@ class NotificationServiceTest {
     private final InMemoryNotificationRepository repository = new InMemoryNotificationRepository();
     private final Map<String, Template> storedTemplates = new HashMap<>();
     private final RecordingOutbox outbox = new RecordingOutbox();
+    private final StubTracePropagation tracing = new StubTracePropagation();
+    private final RecordingMetrics metrics = new RecordingMetrics();
     private final NotificationService service = new NotificationService(
-            repository, new InMemoryTemplateRepository(), outbox, Clock.fixed(NOW, ZoneOffset.UTC));
+            repository, new InMemoryTemplateRepository(), outbox, tracing, metrics, Clock.fixed(NOW, ZoneOffset.UTC));
 
     @Test
     void requestedNotificationIsStoredAsQueuedWithItsEventInTheOutbox() {
@@ -77,6 +79,26 @@ class NotificationServiceTest {
     }
 
     @Test
+    void eventKeepsTheTraceOfTheRequestThatCausedIt() {
+        tracing.current = Map.of("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+
+        service.request("+201000000000", Channel.SMS, null, "Code 4821");
+
+        assertThat(outbox.added)
+                .singleElement()
+                .satisfies(event -> assertThat(event.trace())
+                        .containsEntry("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"));
+    }
+
+    @Test
+    void acceptedNotificationsAreCountedByChannel() {
+        service.request("+201000000000", Channel.SMS, null, "Code 4821");
+        service.request("dina@example.com", Channel.EMAIL, "Order shipped", "Your order is on its way");
+
+        assertThat(metrics.accepted).containsExactly(Channel.SMS, Channel.EMAIL);
+    }
+
+    @Test
     void timestampsAreCutToMilliseconds() {
         Notification notification = service.request("+201000000000", Channel.SMS, null, "Code 4821");
 
@@ -90,6 +112,7 @@ class NotificationServiceTest {
 
         assertThat(repository.size()).isZero();
         assertThat(outbox.added).isEmpty();
+        assertThat(metrics.accepted).isEmpty();
     }
 
     @Test
@@ -171,6 +194,11 @@ class NotificationServiceTest {
         @Override
         public void markPublished(UUID eventId, Instant now) {
             throw new UnsupportedOperationException("the service does not publish events");
+        }
+
+        @Override
+        public long countWaiting() {
+            return added.size();
         }
     }
 

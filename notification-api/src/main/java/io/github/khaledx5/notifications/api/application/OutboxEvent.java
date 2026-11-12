@@ -3,6 +3,7 @@ package io.github.khaledx5.notifications.api.application;
 import io.github.khaledx5.notifications.api.domain.Channel;
 import io.github.khaledx5.notifications.api.domain.Notification;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -15,6 +16,8 @@ import java.util.UUID;
  * @param id identifies the event; it stays the same however often the event is published, which is
  *     how consumers recognise a repeat
  * @param subject optional; channels such as SMS have none
+ * @param trace the trace of the request that caused the event, as captured by {@link
+ *     TracePropagation}; empty if there was none
  */
 public record OutboxEvent(
         UUID id,
@@ -23,7 +26,8 @@ public record OutboxEvent(
         Channel channel,
         String subject,
         String body,
-        Instant occurredAt) {
+        Instant occurredAt,
+        Map<String, String> trace) {
 
     public OutboxEvent {
         Objects.requireNonNull(id, "id must not be null");
@@ -32,9 +36,22 @@ public record OutboxEvent(
         Objects.requireNonNull(channel, "channel must not be null");
         Objects.requireNonNull(body, "body must not be null");
         Objects.requireNonNull(occurredAt, "occurredAt must not be null");
+        trace = trace == null ? Map.of() : Map.copyOf(trace);
     }
 
-    public static OutboxEvent requested(Notification notification) {
+    /** An event that is not part of any trace. */
+    public OutboxEvent(
+            UUID id,
+            UUID notificationId,
+            String recipient,
+            Channel channel,
+            String subject,
+            String body,
+            Instant occurredAt) {
+        this(id, notificationId, recipient, channel, subject, body, occurredAt, Map.of());
+    }
+
+    public static OutboxEvent requested(Notification notification, Map<String, String> trace) {
         return new OutboxEvent(
                 UUID.randomUUID(),
                 notification.id(),
@@ -42,6 +59,7 @@ public record OutboxEvent(
                 notification.channel(),
                 notification.subject().orElse(null),
                 notification.body(),
-                notification.updatedAt());
+                notification.updatedAt(),
+                trace);
     }
 }

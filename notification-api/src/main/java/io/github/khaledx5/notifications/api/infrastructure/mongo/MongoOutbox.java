@@ -59,4 +59,9 @@ class MongoOutbox implements Outbox {
         Update published = new Update().set(OutboxDocument.PUBLISHED_AT, now).unset(OutboxDocument.CLAIMED_UNTIL);
         mongo.updateFirst(query(where("_id").is(eventId.toString())), published, OutboxDocument.class);
     }
+
+    @Override
+    public long countWaiting() {
+        return mongo.count(query(where(OutboxDocument.PUBLISHED_AT).isNull()), OutboxDocument.class);
+    }
 }
