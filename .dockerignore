@@ -8,5 +8,7 @@
 !notification-events/
 !notification-api/
 !delivery-worker/
+# Not built into the images, but Maven reads the pom of every module of the build.
+!end-to-end-tests/
 
 **/target/
