@@ -78,6 +78,27 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      # The Dockerfile keeps the local Maven repository in a BuildKit cache mount, and a fresh runner
+      # starts with an empty one. These two steps carry it from one run to the next, so the image
+      # builds do not download every dependency from Maven Central each time.
+      - name: Restore the Maven repository of the image builds
+        id: maven-repository
+        uses: actions/cache@v6
+        with:
+          path: maven-repository
+          key: docker-maven-${{ hashFiles('**/pom.xml', '.mvn/wrapper/maven-wrapper.properties') }}
+          restore-keys: docker-maven-
+
+      - name: Load it into the Docker build cache
+        uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          cache-map: |
+            {
+              "maven-repository": "/root/.m2"
+            }
+          # Nothing new to save when the build files did not change since the cache was stored.
+          skip-extraction: ${{ steps.maven-repository.outputs.cache-hit }}
+
       - name: Build the images and start the platform
         run: docker compose --profile app up --detach --build --wait --wait-timeout 300
 
