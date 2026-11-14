@@ -6,6 +6,7 @@ import io.github.khaledx5.notifications.api.domain.Notification;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -87,7 +88,30 @@ class NotificationController {
                     @RequestHeader(name = IDEMPOTENCY_KEY_HEADER, required = false)
                     @Pattern(regexp = IDEMPOTENCY_KEY_PATTERN, message = "must be 1 to 255 visible ASCII characters")
                     String idempotencyKey,
-            @Valid @RequestBody CreateNotificationRequest request) {
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                            content =
+                                    @Content(
+                                            mediaType = MediaType.APPLICATION_JSON_VALUE,
+                                            schema = @Schema(implementation = CreateNotificationRequest.class),
+                                            examples = {
+                                                @ExampleObject(
+                                                        name = RequestExamples.INLINE_EMAIL,
+                                                        summary = "Email with inline content",
+                                                        value = RequestExamples.INLINE_EMAIL_JSON),
+                                                @ExampleObject(
+                                                        name = RequestExamples.TEMPLATE_EMAIL,
+                                                        summary = "Email from a template",
+                                                        description = "Create the template first with "
+                                                                + "PUT /api/v1/templates/order-shipped.",
+                                                        value = RequestExamples.TEMPLATE_EMAIL_JSON),
+                                                @ExampleObject(
+                                                        name = RequestExamples.SMS,
+                                                        summary = "SMS with inline content",
+                                                        value = RequestExamples.SMS_JSON)
+                                            }))
+                    @Valid
+                    @RequestBody
+                    CreateNotificationRequest request) {
         if (idempotencyKey == null) {
             Notification notification = accept(request);
             return created(notification).body(NotificationResponse.from(notification));
