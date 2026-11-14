@@ -455,8 +455,8 @@ You need JDK 21 and Docker. Maven comes with the wrapper.
 docker compose up -d                 # infrastructure only
 ./mvnw -DskipTests package           # build both services
 
-java -jar notification-api/target/notification-api-0.1.0-SNAPSHOT.jar
-java -jar delivery-worker/target/delivery-worker-0.1.0-SNAPSHOT.jar
+java -jar notification-api/target/notification-api-1.0.0.jar
+java -jar delivery-worker/target/delivery-worker-1.0.0.jar
 ```
 
 | Command | What it does |
