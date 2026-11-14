@@ -11,6 +11,11 @@ import io.github.khaledx5.notifications.events.DeliveryChannel;
 import io.github.khaledx5.notifications.worker.application.DeliveryException;
 import io.github.khaledx5.notifications.worker.application.OutboundMessage;
 import io.github.khaledx5.notifications.worker.application.UndeliverableException;
+import jakarta.mail.Address;
+import jakarta.mail.SendFailedException;
+import jakarta.mail.internet.AddressException;
+import jakarta.mail.internet.InternetAddress;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -55,6 +60,33 @@ class SmtpEmailSenderTest {
         assertThatThrownBy(() -> sender.send(new OutboundMessage(UUID.randomUUID(), "not an address", "Hi", "Hello")))
                 .isInstanceOf(UndeliverableException.class)
                 .hasMessageContaining("not a valid email address");
+    }
+
+    @Test
+    void addressTheServerRefusesForGoodCanNeverBeDelivered() throws AddressException {
+        Address[] none = new Address[0];
+        Address[] refused = {new InternetAddress("dina@example.com")};
+        MailSendException refusal = new MailSendException(Map.of(
+                new SimpleMailMessage(), new SendFailedException("Invalid Addresses", null, none, none, refused)));
+        willThrow(refusal).given(mail).send(any(SimpleMailMessage.class));
+
+        assertThatThrownBy(() -> sender.send(new OutboundMessage(UUID.randomUUID(), "dina@example.com", "Hi", "Hello")))
+                .isInstanceOf(UndeliverableException.class)
+                .hasMessage("The email server refused the recipient address")
+                .hasCause(refusal);
+    }
+
+    @Test
+    void addressTheServerRefusesForNowIsWorthRetrying() throws AddressException {
+        Address[] none = new Address[0];
+        Address[] notSentYet = {new InternetAddress("dina@example.com")};
+        MailSendException busy = new MailSendException(
+                Map.of(new SimpleMailMessage(), new SendFailedException("Mailbox busy", null, none, notSentYet, none)));
+        willThrow(busy).given(mail).send(any(SimpleMailMessage.class));
+
+        assertThatThrownBy(() -> sender.send(new OutboundMessage(UUID.randomUUID(), "dina@example.com", "Hi", "Hello")))
+                .isInstanceOf(DeliveryException.class)
+                .isNotInstanceOf(UndeliverableException.class);
     }
 
     @Test

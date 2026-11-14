@@ -126,6 +126,18 @@ class DeliveryFlowIT {
     }
 
     @Test
+    void emailToAnAddressTheServerRefusesFailsAtOnceWithTheReason() {
+        // Mailpit answers 553 to a recipient that is not an RFC 5321 address, as a real server would.
+        NotificationRequested event = requested(DeliveryChannel.EMAIL, "Dina", "Time off", "Back next week");
+
+        publish(event);
+
+        DeliveryStatusChanged status = statuses.awaitFor(event.notificationId());
+        assertThat(status.outcome()).isEqualTo(DeliveryOutcome.FAILED);
+        assertThat(status.failureReason()).isEqualTo("The email server refused the recipient address");
+    }
+
+    @Test
     void deliveryThatFailsAtFirstIsRetriedUntilItSucceeds() {
         String token = "device-" + UUID.randomUUID();
         DeliveryException providerDown = new DeliveryException("The push provider is down");
