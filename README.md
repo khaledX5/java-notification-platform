@@ -416,7 +416,8 @@ The coverage report of each module is written to `target/site/jacoco/index.html`
 ├── end-to-end-tests/           Both services as containers, tested from the outside
 ├── Dockerfile                  One multi-stage file for both services
 ├── compose.yaml                Infrastructure, plus the services under the "app" profile
-└── .github/workflows/ci.yml    Build, tests, coverage, and the full-stack smoke test
+├── .github/workflows/ci.yml    Build, tests, coverage, and the full-stack smoke test
+└── .github/workflows/codeql.yml  CodeQL security analysis of the Java code and the workflows
 ```
 
 ## Configuration
