@@ -215,6 +215,42 @@ class NotificationControllerTests {
     }
 
     @Test
+    void unknownChannelIsRejectedWithTheChannelsThatExist() {
+        MvcTestResult result = post("""
+                {"recipient": "dina@example.com", "channel": "dina@example.com", "body": "Your order is on its way"}
+                """);
+
+        assertThat(result).hasStatus(HttpStatus.BAD_REQUEST).hasContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(result).bodyJson().isLenientlyEqualTo("""
+                        {
+                          "title": "Bad Request",
+                          "status": 400,
+                          "detail": "Invalid request content.",
+                          "instance": "/api/v1/notifications",
+                          "errors": [
+                            {"field": "channel", "message": "must be one of EMAIL, SMS, PUSH"}
+                          ]
+                        }
+                        """);
+        verifyNoInteractions(notifications);
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', textBlock = """
+            {"recipient": {"name": "Dina"}, "channel": "EMAIL", "body": "Hi"}                  | recipient
+            {"recipient": "+201000000000", "channel": "SMS", "body": ["Code", "4821"]}        | body
+            {"recipient": "dina@example.com", "channel": "EMAIL", "templateKey": "welcome", "variables": {"name": {"first": "Dina"}}} | variables.name
+            """)
+    void valueOfTheWrongTypeIsRejectedUnderItsField(String json, String field) {
+        MvcTestResult result = post(json);
+
+        assertThat(result).hasStatus(HttpStatus.BAD_REQUEST);
+        assertThat(result).bodyJson().extractingPath("$.errors[0].field").isEqualTo(field);
+        assertThat(result).bodyJson().extractingPath("$.errors[0].message").isEqualTo("has a value of the wrong type");
+        verifyNoInteractions(notifications);
+    }
+
+    @Test
     void unexpectedFailureIsAnInternalErrorProblemWithoutDetails() {
         given(notifications.getById(any())).willThrow(new IllegalStateException("mongo password=secret"));
 
