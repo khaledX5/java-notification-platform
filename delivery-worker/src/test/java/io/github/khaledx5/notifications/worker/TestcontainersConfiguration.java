@@ -23,13 +23,13 @@ public class TestcontainersConfiguration {
     @Bean
     @ServiceConnection
     KafkaContainer kafkaContainer() {
-        return new KafkaContainer(DockerImageName.parse("apache/kafka:4.3.2"));
+        return new KafkaContainer(DockerImageName.parse("apache/kafka:4.4.0"));
     }
 
     @Bean
     @ServiceConnection(name = "redis")
     GenericContainer<?> redisContainer() {
-        return new GenericContainer<>(DockerImageName.parse("redis:8.8-alpine")).withExposedPorts(REDIS_PORT);
+        return new GenericContainer<>(DockerImageName.parse("redis:8.10-alpine")).withExposedPorts(REDIS_PORT);
     }
 
     /** Fake SMTP server that keeps every email and lists them over HTTP. */

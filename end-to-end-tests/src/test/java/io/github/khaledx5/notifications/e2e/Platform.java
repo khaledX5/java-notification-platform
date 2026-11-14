@@ -37,7 +37,7 @@ final class Platform implements AutoCloseable {
 
     private final Network network = Network.newNetwork();
 
-    private final KafkaContainer kafka = new KafkaContainer(DockerImageName.parse("apache/kafka:4.3.2"))
+    private final KafkaContainer kafka = new KafkaContainer(DockerImageName.parse("apache/kafka:4.4.0"))
             .withNetwork(network)
             .withNetworkAliases("kafka")
             .withListener(KAFKA_ON_NETWORK);
@@ -48,7 +48,7 @@ final class Platform implements AutoCloseable {
             .withNetwork(network)
             .withNetworkAliases("mongodb");
 
-    private final GenericContainer<?> redis = new GenericContainer<>(DockerImageName.parse("redis:8.8-alpine"))
+    private final GenericContainer<?> redis = new GenericContainer<>(DockerImageName.parse("redis:8.10-alpine"))
             .withNetwork(network)
             .withNetworkAliases("redis")
             .withExposedPorts(REDIS_PORT);
