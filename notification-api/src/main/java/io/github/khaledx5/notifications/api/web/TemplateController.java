@@ -4,6 +4,7 @@ import io.github.khaledx5.notifications.api.application.TemplateService;
 import io.github.khaledx5.notifications.api.domain.Template;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -46,7 +47,19 @@ class TemplateController {
     @PutMapping("/{key}")
     TemplateResponse upsert(
             @PathVariable @Size(max = Template.MAX_KEY_LENGTH) @Pattern(regexp = Template.KEY_PATTERN) String key,
-            @Valid @RequestBody UpsertTemplateRequest request) {
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                            content =
+                                    @Content(
+                                            mediaType = MediaType.APPLICATION_JSON_VALUE,
+                                            schema = @Schema(implementation = UpsertTemplateRequest.class),
+                                            examples =
+                                                    @ExampleObject(
+                                                            name = RequestExamples.ORDER_SHIPPED_TEMPLATE,
+                                                            summary = "The template used by the notification examples",
+                                                            value = RequestExamples.ORDER_SHIPPED_TEMPLATE_JSON)))
+                    @Valid
+                    @RequestBody
+                    UpsertTemplateRequest request) {
         Template template = templates.save(new Template(key, request.subject(), request.body()));
         return TemplateResponse.from(template);
     }
