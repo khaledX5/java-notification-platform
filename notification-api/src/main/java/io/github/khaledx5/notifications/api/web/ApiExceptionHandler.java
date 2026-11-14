@@ -8,8 +8,10 @@ import io.github.khaledx5.notifications.api.application.TemplateNotFoundExceptio
 import io.github.khaledx5.notifications.api.application.UnknownTemplateException;
 import io.github.khaledx5.notifications.api.domain.MissingTemplateVariableException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -17,6 +19,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.method.ParameterErrors;
 import org.springframework.validation.method.ParameterValidationResult;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -26,6 +29,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.exc.MismatchedInputException;
 
 /**
  * Turns every error into an RFC 9457 problem document ({@code application/problem+json}).
@@ -139,6 +144,58 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
             }
         }
         return validationProblem(ex, ex.getBody(), violations, headers, status, request);
+    }
+
+    /**
+     * A body that is valid JSON but holds a value of the wrong kind, such as a channel that does not
+     * exist, is reported like any other invalid field: with its name and what it accepts. A body
+     * that is not JSON at all keeps the general answer, as there is no field to point at.
+     */
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(
+            HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        MismatchedInputException mismatch = mismatchedInput(ex);
+        if (mismatch == null || mismatch.getPath().isEmpty()) {
+            return super.handleHttpMessageNotReadable(ex, headers, status, request);
+        }
+        ProblemDetail problem = createProblemDetail(ex, status, INVALID_REQUEST_DETAIL, null, null, request);
+        FieldViolation violation = new FieldViolation(fieldPath(mismatch), expectedValue(mismatch));
+        return validationProblem(ex, problem, List.of(violation), headers, status, request);
+    }
+
+    private static MismatchedInputException mismatchedInput(Throwable ex) {
+        for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+            if (cause instanceof MismatchedInputException mismatch) {
+                return mismatch;
+            }
+        }
+        return null;
+    }
+
+    /** The field as the client wrote it: {@code channel}, {@code variables.orderId}, {@code items[2]}. */
+    private static String fieldPath(JacksonException ex) {
+        StringBuilder path = new StringBuilder();
+        for (JacksonException.Reference reference : ex.getPath()) {
+            if (reference.getPropertyName() != null) {
+                if (!path.isEmpty()) {
+                    path.append('.');
+                }
+                path.append(reference.getPropertyName());
+            } else if (reference.getIndex() >= 0) {
+                path.append('[').append(reference.getIndex()).append(']');
+            }
+        }
+        return path.toString();
+    }
+
+    private static String expectedValue(MismatchedInputException ex) {
+        Class<?> target = ex.getTargetType();
+        if (target != null && target.isEnum()) {
+            return Arrays.stream(target.getEnumConstants())
+                    .map(constant -> ((Enum<?>) constant).name())
+                    .collect(Collectors.joining(", ", "must be one of ", ""));
+        }
+        return "has a value of the wrong type";
     }
 
     /** A header is reported under the name the client sent it with, not the Java parameter name. */
