@@ -2,13 +2,6 @@ package io.github.khaledx5.notifications.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.BDDMockito.willAnswer;
-import static org.mockito.BDDMockito.willCallRealMethod;
-import static org.mockito.BDDMockito.willThrow;
-import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.verify;
 
 import io.github.khaledx5.notifications.api.application.EventPublishingException;
 import io.github.khaledx5.notifications.api.application.NotificationEventPublisher;
@@ -18,26 +11,29 @@ import io.github.khaledx5.notifications.events.NotificationRequested;
 import io.github.khaledx5.notifications.events.Topics;
 import java.io.UnsupportedEncodingException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.bson.Document;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentMatcher;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 import tools.jackson.databind.json.JsonMapper;
@@ -47,10 +43,15 @@ import tools.jackson.databind.json.JsonMapper;
  * outage and a relay that stops half-way, and its event still goes out.
  *
  * <p>A claim lasts one second here instead of thirty, so a failed publish is tried again quickly.
+ *
+ * <p>The failures are staged by two small decorators around the real outbox and the real publisher,
+ * not by stubbing Mockito spies: the relay calls those beans from its scheduler thread all the time,
+ * and a stub that is being set up on one thread while another thread calls the same spy can end up
+ * on the wrong method.
  */
 @SpringBootTest(properties = {"notifications.outbox.claim-duration=1s", "notifications.outbox.poll-interval=100ms"})
 @AutoConfigureMockMvc
-@Import({TestcontainersConfiguration.class, OutboxRecoveryIT.PublishedEventsConfiguration.class})
+@Import({TestcontainersConfiguration.class, OutboxRecoveryIT.TestDoubles.class})
 class OutboxRecoveryIT {
 
     private static final String NOTIFICATIONS = "/api/v1/notifications";
@@ -68,29 +69,26 @@ class OutboxRecoveryIT {
     @Autowired
     private JsonMapper json;
 
-    @MockitoSpyBean
-    private NotificationEventPublisher publisher;
+    @Autowired
+    private UnreliableBroker broker;
 
-    @MockitoSpyBean
-    private Outbox outbox;
+    @Autowired
+    private ForgetfulOutbox outbox;
 
     @Test
     void notificationIsAcceptedWhileTheBrokerIsDownAndPublishedOnceItIsBack() {
         String recipient = uniqueRecipient();
-        willThrow(new EventPublishingException("the broker is down", new IllegalStateException()))
-                .given(publisher)
-                .publishRequested(argThat(eventFor(recipient)));
+        broker.goDownFor(recipient);
 
         UUID id = accept(recipient);
 
         // The request succeeded although nothing could be published, and the event is waiting.
-        await().atMost(TIMEOUT)
-                .untilAsserted(() -> verify(publisher, atLeastOnce()).publishRequested(argThat(eventFor(recipient))));
+        await().atMost(TIMEOUT).until(() -> broker.attemptsFor(recipient) > 0);
         assertThat(outboxEntry(id)).doesNotContainKey("publishedAt");
         assertThat(published.of(id)).isEmpty();
         assertThat(statusOf(id)).isEqualTo("QUEUED");
 
-        willCallRealMethod().given(publisher).publishRequested(argThat(eventFor(recipient)));
+        broker.comeBackFor(recipient);
 
         await().atMost(TIMEOUT).untilAsserted(() -> assertThat(published.of(id)).hasSize(1));
         await().atMost(TIMEOUT).untilAsserted(() -> assertThat(outboxEntry(id)).containsKey("publishedAt"));
@@ -102,11 +100,7 @@ class OutboxRecoveryIT {
     @Test
     void outageOfOneEventDoesNotLoseTheOnesAcceptedDuringIt() {
         String unlucky = uniqueRecipient();
-        willThrow(new EventPublishingException("the broker is down", new IllegalStateException()))
-                .willThrow(new EventPublishingException("the broker is down", new IllegalStateException()))
-                .willCallRealMethod()
-                .given(publisher)
-                .publishRequested(argThat(eventFor(unlucky)));
+        broker.failFor(unlucky, 2);
 
         UUID first = accept(unlucky);
         UUID second = accept(uniqueRecipient());
@@ -117,22 +111,14 @@ class OutboxRecoveryIT {
             assertThat(published.of(second)).hasSize(1);
             assertThat(published.of(third)).hasSize(1);
         });
+        assertThat(broker.attemptsFor(unlucky)).isGreaterThanOrEqualTo(3);
     }
 
     @Test
     void eventThatWasPublishedButNotMarkedGoesOutAgainWithTheSameEventId() {
         String recipient = uniqueRecipient();
         // Stands for a relay that stopped right after the broker confirmed the event of this recipient.
-        AtomicBoolean markLost = new AtomicBoolean();
-        willAnswer(marking -> {
-                    UUID eventId = marking.getArgument(0);
-                    if (recipient.equals(recipientOf(eventId)) && markLost.compareAndSet(false, true)) {
-                        return null;
-                    }
-                    return marking.callRealMethod();
-                })
-                .given(outbox)
-                .markPublished(any(), any());
+        outbox.forgetNextPublishedMarkFor(recipient);
 
         UUID id = accept(recipient);
 
@@ -175,27 +161,119 @@ class OutboxRecoveryIT {
                 .first();
     }
 
-    private String recipientOf(UUID eventId) {
-        return mongo.getCollection("outbox")
-                .find(new Document("_id", eventId.toString()))
-                .first()
-                .getString("recipient");
-    }
-
-    private static ArgumentMatcher<OutboxEvent> eventFor(String recipient) {
-        return event -> event != null && event.recipient().equals(recipient);
-    }
-
     private static String uniqueRecipient() {
         return "dina-" + UUID.randomUUID() + "@example.com";
     }
 
     @TestConfiguration(proxyBeanMethods = false)
-    static class PublishedEventsConfiguration {
+    static class TestDoubles {
 
         @Bean
         PublishedEvents publishedEvents() {
             return new PublishedEvents();
+        }
+
+        @Bean
+        @Primary
+        UnreliableBroker unreliableBroker(
+                @Qualifier("kafkaNotificationEventPublisher") NotificationEventPublisher kafkaPublisher) {
+            return new UnreliableBroker(kafkaPublisher);
+        }
+
+        @Bean
+        @Primary
+        ForgetfulOutbox forgetfulOutbox(@Qualifier("mongoOutbox") Outbox mongoOutbox) {
+            return new ForgetfulOutbox(mongoOutbox);
+        }
+    }
+
+    /**
+     * The real publisher, except that the broker can be made to refuse the events of chosen
+     * recipients. Events of every other recipient go through, so the tests do not disturb each other.
+     */
+    static class UnreliableBroker implements NotificationEventPublisher {
+
+        private static final int UNTIL_IT_COMES_BACK = Integer.MAX_VALUE;
+
+        private final NotificationEventPublisher broker;
+        private final Map<String, AtomicInteger> failuresLeft = new ConcurrentHashMap<>();
+        private final Map<String, AtomicInteger> attempts = new ConcurrentHashMap<>();
+
+        UnreliableBroker(NotificationEventPublisher broker) {
+            this.broker = broker;
+        }
+
+        void failFor(String recipient, int times) {
+            failuresLeft.put(recipient, new AtomicInteger(times));
+        }
+
+        void goDownFor(String recipient) {
+            failFor(recipient, UNTIL_IT_COMES_BACK);
+        }
+
+        void comeBackFor(String recipient) {
+            failuresLeft.remove(recipient);
+        }
+
+        int attemptsFor(String recipient) {
+            AtomicInteger count = attempts.get(recipient);
+            return count == null ? 0 : count.get();
+        }
+
+        @Override
+        public void publishRequested(OutboxEvent event) {
+            attempts.computeIfAbsent(event.recipient(), recipient -> new AtomicInteger())
+                    .incrementAndGet();
+            AtomicInteger left = failuresLeft.get(event.recipient());
+            if (left != null && left.getAndUpdate(count -> Math.max(count - 1, 0)) > 0) {
+                throw new EventPublishingException("the broker is down", new IllegalStateException());
+            }
+            broker.publishRequested(event);
+        }
+    }
+
+    /**
+     * The real outbox, except that it can skip marking the event of a chosen recipient as published,
+     * once, as a relay that stopped right after the broker confirmed the event would.
+     */
+    static class ForgetfulOutbox implements Outbox {
+
+        private final Outbox outbox;
+        private final Set<String> forgetFor = ConcurrentHashMap.newKeySet();
+        private final Map<UUID, String> recipientsByEvent = new ConcurrentHashMap<>();
+
+        ForgetfulOutbox(Outbox outbox) {
+            this.outbox = outbox;
+        }
+
+        void forgetNextPublishedMarkFor(String recipient) {
+            forgetFor.add(recipient);
+        }
+
+        @Override
+        public void add(OutboxEvent event) {
+            outbox.add(event);
+        }
+
+        @Override
+        public Optional<OutboxEvent> claimNext(Instant now, Duration claimDuration) {
+            Optional<OutboxEvent> next = outbox.claimNext(now, claimDuration);
+            next.ifPresent(event -> recipientsByEvent.put(event.id(), event.recipient()));
+            return next;
+        }
+
+        @Override
+        public void markPublished(UUID eventId, Instant now) {
+            String recipient = recipientsByEvent.get(eventId);
+            if (recipient != null && forgetFor.remove(recipient)) {
+                return;
+            }
+            outbox.markPublished(eventId, now);
+        }
+
+        @Override
+        public long countWaiting() {
+            return outbox.countWaiting();
         }
     }
 
