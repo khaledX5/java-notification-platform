@@ -315,7 +315,7 @@ notifications.requested ──▶ -retry-0 ──▶ -retry-1 ──▶ -retry-2
 
 After four attempts the event lands on the dead-letter topic, the notification is reported as `FAILED`, and the event stays there for inspection.
 
-Not every failure is worth retrying. A malformed phone number will be malformed in 18 seconds too. Senders throw `UndeliverableException` for those, and the notification fails at once with the reason.
+Not every failure is worth retrying. A malformed phone number will be malformed in 18 seconds too. Senders throw `UndeliverableException` for those, and the notification fails at once with the reason. The same goes for a mail server that refuses the recipient for good (`550`, `553`); a temporary refusal (`4xx`) is retried.
 
 **Trade-off.** A retried event can be delivered after a newer one. Notifications are independent of each other, so that is fine here. It would not be fine for events that must stay in order.
 
@@ -370,12 +370,12 @@ Health and readiness probes are at `/actuator/health/liveness` and `/actuator/he
 
 ## Testing
 
-About 350 tests, on four levels. Nothing on the path under test is mocked from the integration level up.
+About 400 tests, on four levels. Nothing on the path under test is mocked from the integration level up.
 
 | Level | Count | Runs against | What it proves |
 | --- | --- | --- | --- |
-| Unit | 261 | Plain Java, in-memory fakes | The business rules: status changes, idempotency, relay, deduplication, rate limiting |
-| Integration | 87 | Real Kafka, MongoDB, Redis and SMTP in [Testcontainers](https://testcontainers.com) | Each adapter and each service on its own, including failure and recovery |
+| Unit | 306 | Plain Java, in-memory fakes | The business rules: status changes, idempotency, relay, deduplication, rate limiting |
+| Integration | 89 | Real Kafka, MongoDB, Redis and SMTP in [Testcontainers](https://testcontainers.com) | Each adapter and each service on its own, including failure and recovery |
 | End-to-end | 6 | Both services as separate processes, from their real jars | A request over HTTP ends as an email in an inbox |
 | Smoke | 1 CI job | The images, started with `docker compose` | The Dockerfile and the compose file actually work |
 
