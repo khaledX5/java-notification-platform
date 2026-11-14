@@ -1,0 +1,63 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so new queries also run against code that has not changed.
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The Java code is built the way CI builds it, so CodeQL sees exactly the compiled sources.
+          - language: java-kotlin
+            build-mode: manual
+          # The workflow files themselves, for unsafe use of inputs and too broad permissions.
+          - language: actions
+            build-mode: none
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Compile
+        if: matrix.build-mode == 'manual'
+        run: ./mvnw --batch-mode --no-transfer-progress -DskipTests compile
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
