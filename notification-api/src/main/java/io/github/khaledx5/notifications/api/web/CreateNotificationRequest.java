@@ -17,8 +17,11 @@ import java.util.TreeMap;
  * <p>The content comes from exactly one place: either {@code body} (with an optional {@code
  * subject}) written by the caller, or a stored template named by {@code templateKey} and filled in
  * with {@code variables}.
+ *
+ * <p>The recipient of an email must look like an email address.
  */
 @ExactlyOneContentSource
+@ValidEmailRecipient
 record CreateNotificationRequest(
         @NotBlank @Size(max = MAX_RECIPIENT_LENGTH) String recipient,
         @NotNull Channel channel,

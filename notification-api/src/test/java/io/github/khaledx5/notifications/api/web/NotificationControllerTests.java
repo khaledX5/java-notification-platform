@@ -135,6 +135,59 @@ class NotificationControllerTests {
         verifyNoInteractions(notifications);
     }
 
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "Dina",
+                "dina@",
+                "@example.com",
+                "dina@example",
+                "dina@example..com",
+                "dina @example.com",
+                "dina@exa mple.com",
+                "dina@@example.com"
+            })
+    void rejectsAnEmailRecipientThatIsNotAnAddress(String recipient) {
+        MvcTestResult result = post("""
+                {"recipient": "%s", "channel": "EMAIL", "subject": "Time off", "body": "Back next week"}
+                """.formatted(recipient));
+
+        assertThat(result).hasStatus(HttpStatus.BAD_REQUEST);
+        assertThat(result).bodyJson().isLenientlyEqualTo("""
+                        {
+                          "detail": "Invalid request content.",
+                          "errors": [
+                            {"field": "recipient", "message": "must be an email address, such as dina@example.com"}
+                          ]
+                        }
+                        """);
+        verifyNoInteractions(notifications);
+    }
+
+    @Test
+    void emailRecipientIsCheckedForATemplateToo() {
+        MvcTestResult result = post("""
+                {"recipient": "Dina", "channel": "EMAIL", "templateKey": "order-shipped", "variables": {"orderId": "A-1042"}}
+                """);
+
+        assertThat(result).hasStatus(HttpStatus.BAD_REQUEST);
+        assertThat(result).bodyJson().extractingPath("$.errors[0].field").isEqualTo("recipient");
+        verifyNoInteractions(notifications);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"dina@example.com", "dina.ali+orders@mail.example.co", "DINA@EXAMPLE.COM"})
+    void acceptsAnEmailRecipientThatIsAnAddress(String recipient) {
+        given(notifications.request(recipient, Channel.EMAIL, "Time off", "Back next week"))
+                .willReturn(Notification.request(recipient, Channel.EMAIL, "Time off", "Back next week", CREATED));
+
+        MvcTestResult result = post("""
+                {"recipient": "%s", "channel": "EMAIL", "subject": "Time off", "body": "Back next week"}
+                """.formatted(recipient));
+
+        assertThat(result).hasStatus(HttpStatus.CREATED);
+    }
+
     @Test
     void returnsAStoredNotification() {
         Notification sms = pendingSms();
